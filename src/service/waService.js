@@ -545,8 +545,6 @@ const defaultReadyTimeoutMs = Number.isNaN(
 )
   ? 60000
   : Number(process.env.WA_GATEWAY_READY_TIMEOUT_MS);
-const lifecycleEventInFlight = new WeakMap();
-const lifecycleEventQueued = new WeakMap();
 const logoutDisconnectReasons = new Set([
   "LOGGED_OUT",
   "UNPAIRED",
@@ -621,28 +619,7 @@ function registerClientReadiness(client, label) {
   getClientReadinessState(client, label);
 }
 
-function runSingleLifecycleTransition(client, label, eventName, reason, transitionHandler) {
-  if (lifecycleEventInFlight.get(client)) {
-    const queuedEvent = lifecycleEventQueued.get(client);
-    const currentReason = reason ?? null;
-    if (queuedEvent?.eventName !== eventName || queuedEvent?.reason !== currentReason) {
-      lifecycleEventQueued.set(client, { eventName, reason: currentReason });
-      writeWaStructuredLog(
-        "debug",
-        buildWaStructuredLog({
-          clientId: client?.clientId || null,
-          label,
-          event: "wa_lifecycle_transition_queued",
-          errorCode: eventName,
-          reason: currentReason,
-        }),
-        { debugOnly: true }
-      );
-    }
-    return;
-  }
-
-  lifecycleEventInFlight.set(client, true);
+function applyLifecycleTransition(client, label, eventName, reason, transitionHandler) {
   Promise.resolve()
     .then(transitionHandler)
     .catch((error) => {
@@ -653,58 +630,9 @@ function runSingleLifecycleTransition(client, label, eventName, reason, transiti
           label,
           event: "wa_lifecycle_transition_failed",
           errorCode: eventName,
+          reason: reason ?? null,
           errorMessage: error?.message || String(error),
         })
-      );
-    })
-    .finally(() => {
-      lifecycleEventInFlight.set(client, false);
-      const queuedEvent = lifecycleEventQueued.get(client);
-      if (!queuedEvent) {
-        return;
-      }
-      lifecycleEventQueued.delete(client);
-      runSingleLifecycleTransition(
-        client,
-        label,
-        queuedEvent.eventName,
-        queuedEvent.reason,
-        () => {
-          if (queuedEvent.eventName === "auth_failure") {
-            const state = getClientReadinessState(client, label);
-            state.lastAuthFailureAt = Date.now();
-            state.lastAuthFailureMessage = queuedEvent.reason || null;
-            setClientNotReady(client);
-            writeWaStructuredLog(
-              "warn",
-              buildWaStructuredLog({
-                clientId: client?.clientId || null,
-                label,
-                event: "auth_failure",
-                errorCode: "AUTH_FAILURE",
-                errorMessage: queuedEvent.reason || null,
-              })
-            );
-            return;
-          }
-          if (queuedEvent.eventName === "disconnected") {
-            const normalizedReason = normalizeDisconnectReason(queuedEvent.reason);
-            const shouldAwaitQr = isLogoutDisconnectReason(normalizedReason);
-            const state = getClientReadinessState(client, label);
-            state.lastDisconnectReason = normalizedReason || null;
-            state.awaitingQrScan = shouldAwaitQr;
-            setClientNotReady(client);
-            writeWaStructuredLog(
-              "warn",
-              buildWaStructuredLog({
-                clientId: client?.clientId || null,
-                label,
-                event: "disconnected",
-                errorCode: normalizedReason || null,
-              })
-            );
-          }
-        }
       );
     });
 }
@@ -1179,7 +1107,7 @@ waClient.on("authenticated", (session) => {
 });
 
 waClient.on("auth_failure", (message) => {
-  runSingleLifecycleTransition(
+  applyLifecycleTransition(
     waClient,
     "WA-GATEWAY",
     "auth_failure",
@@ -1195,7 +1123,7 @@ waClient.on("auth_failure", (message) => {
 });
 
 waClient.on("disconnected", (reason) => {
-  runSingleLifecycleTransition(waClient, "WA-GATEWAY", "disconnected", reason, () => {
+  applyLifecycleTransition(waClient, "WA-GATEWAY", "disconnected", reason, () => {
     const normalizedReason = normalizeDisconnectReason(reason);
     const state = getClientReadinessState(waClient, "WA-GATEWAY");
     state.lastDisconnectReason = normalizedReason || null;
