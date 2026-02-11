@@ -5,19 +5,17 @@
 
 export function logWaServiceDiagnostics(
   waClient,
-  waUserClient = null,
-  waGatewayClient = null,
+  // eslint-disable-next-line no-unused-vars
+  _waUserClient = null,
+  // eslint-disable-next-line no-unused-vars
+  _waGatewayClient = null,
   readinessSummary = null
 ) {
   const clients = [
     { name: 'waClient', label: 'WA-GATEWAY', client: waClient },
   ];
-  if (waUserClient) {
-    clients.push({ name: 'waUserClient', label: 'WA-USER', client: waUserClient });
-  }
-  if (waGatewayClient) {
-    clients.push({ name: 'waGatewayClient', label: 'WA-GATEWAY', client: waGatewayClient });
-  }
+  // Legacy parameters for backward compatibility - ignore if provided
+  // (waUserClient and waGatewayClient no longer exist after refactoring)
   
   const readinessClientEntries = Array.isArray(readinessSummary?.clients)
     ? readinessSummary.clients
@@ -71,16 +69,17 @@ export function logWaServiceDiagnostics(
   console.log('\n===========================================\n');
 }
 
-export function checkMessageListenersAttached(waClient, waUserClient = null, waGatewayClient = null) {
+export function checkMessageListenersAttached(
+  waClient,
+  // eslint-disable-next-line no-unused-vars
+  _waUserClient = null,
+  // eslint-disable-next-line no-unused-vars
+  _waGatewayClient = null
+) {
   const clients = [
     { name: 'waClient', client: waClient },
   ];
-  if (waUserClient) {
-    clients.push({ name: 'waUserClient', client: waUserClient });
-  }
-  if (waGatewayClient) {
-    clients.push({ name: 'waGatewayClient', client: waGatewayClient });
-  }
+  // Legacy parameters for backward compatibility - ignore if provided
 
   let allGood = true;
   clients.forEach(({ name, client }) => {

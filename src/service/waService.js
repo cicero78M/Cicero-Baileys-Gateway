@@ -3949,11 +3949,6 @@ Ketik *angka menu* di atas, atau *batal* untuk keluar.
   };
 }
 
-const handleMessage = createHandleMessage(waClient, {
-  allowUserMenu: true,
-  clientLabel: "[WA-GATEWAY]",
-});
-
 async function processGatewayBulkDeletion(chatId, text) {
   const existingSession = getSession(chatId);
   const session =
