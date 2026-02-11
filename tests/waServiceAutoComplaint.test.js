@@ -16,6 +16,9 @@ jest.unstable_mockModule('../src/handler/menu/clientRequestHandlers.js', () => (
     respondComplaint_message: respondComplaintMessageMock,
     main: jest.fn(),
   },
+}));
+
+jest.unstable_mockModule('../src/service/complaintService.js', () => ({
   parseComplaintMessage: parseComplaintMessageMock,
 }));
 

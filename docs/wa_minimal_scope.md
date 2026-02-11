@@ -118,6 +118,11 @@ Ekspektasi:
 - Command menu interaktif umum (`oprrequest`, `userrequest`, `dirrequest`, `dashrequest`, `clientrequest` non-bulk/non-complaint).
 - Command admin operasional prefiks lama (`addnewclient#...`, `fetchinsta#...`, dll).
 
+
+### E. Validasi format bulk yang tidak sesuai
+- Jika pesan masuk ke flow bulk tetapi **tidak** mengandung header yang valid (`Permohonan Penghapusan Data Personil – <SATKER>`), bot mengirim balasan terarah agar pengirim memperbaiki template.
+- Balasan ini menggantikan fallback diam sehingga operator langsung tahu format judul yang wajib dipakai sebelum daftar personel diproses.
+
 ---
 
 ## 4) Kriteria Sukses UAT
@@ -169,7 +174,7 @@ Parser command pada `createHandleMessage(...)->processMessage` dan `handleGatewa
 1. **Normalisasi teks** (`trim()` + `toLowerCase()`).
 2. **Complaint-first handling** melalui `handleComplaintMessageIfApplicable(...)`.
 3. **Deteksi bulk deletion** (header regex atau sesi bulk aktif) lalu `processBulkDeletionRequest(...)`.
-4. **Fallback minimal** dengan balasan singkat: `fitur tidak tersedia`.
+4. **Fallback minimal** dengan balasan terarah: `Perintah lama tidak didukung. Gunakan format komplain atau template bulk deletion yang berlaku.`
 
 Perubahan ini sekaligus menghapus cabang parser non-minimal scope seperti menu `oprrequest`, `userrequest`, `dirrequest`, `dashrequest`, serta command prefiks admin lama (`addnewclient#...`, `fetchinsta#...`) dari jalur parsing pesan utama.
 
@@ -182,7 +187,7 @@ Pada pembaruan modul `src/service/waService.js`, dependensi parser dipersempit a
 - Import helper sesi yang tidak lagi dipakai pada parser minimal (misalnya timeout helper/operator helper yang tidak dipanggil) dihapus.
 - Inisialisasi sesi bulk dirapikan agar tidak melakukan lookup `getSession(chatId)` berulang sebelum memanggil `processBulkDeletionRequest`.
 
-Refactor ini tidak mengubah kontrak alur minimal: complaint-first handling, dilanjut deteksi bulk deletion, lalu fallback `fitur tidak tersedia`.
+Refactor ini tidak mengubah kontrak alur minimal: complaint-first handling, dilanjut deteksi bulk deletion, lalu fallback pesan bahwa command lama tidak didukung.
 
 ## 6) Pemisahan Modul Bulk Deletion (Pembaruan)
 

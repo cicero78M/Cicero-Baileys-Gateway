@@ -98,3 +98,28 @@ test("processBulkDeletionRequest executes bulk flow and sends summary", async ()
   expect(session.step).toBe("main");
   expect(mockClearSession).toHaveBeenCalledWith("62812@c.us");
 });
+
+
+test("processBulkDeletionRequest returns guided error for invalid header format", async () => {
+  const session = { step: "bulkStatus_process" };
+  const waClient = { sendMessage: jest.fn() };
+
+  const result = await processBulkDeletionRequest({
+    session,
+    chatId: "62812@c.us",
+    text: "Mohon hapus data personel berikut",
+    waClient,
+    userModel: { findUserById: jest.fn() },
+  });
+
+  expect(result).toEqual({ processed: false });
+  expect(waClient.sendMessage).toHaveBeenCalledWith(
+    "62812@c.us",
+    expect.stringContaining("Format tidak valid")
+  );
+  expect(waClient.sendMessage).toHaveBeenCalledWith(
+    "62812@c.us",
+    expect.stringContaining("Permohonan Penghapusan Data Personil")
+  );
+  expect(session.step).toBe("main");
+});
