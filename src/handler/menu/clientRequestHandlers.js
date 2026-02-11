@@ -72,7 +72,7 @@ async function waitForComplaintResponseDelay() {
   await new Promise((resolve) => setTimeout(resolve, COMPLAINT_RESPONSE_DELAY_MS));
 }
 
-async function sendComplaintResponse(session, waClient) {
+async function sendComplaintResponse(session, waClient, chatId) {
   const data = session.respondComplaint || {};
   const { nrp, user, issue, solution, channel: storedChannel } = data;
 
@@ -107,16 +107,36 @@ async function sendComplaintResponse(session, waClient) {
   if (channel === "whatsapp") {
     const target = formatToWhatsAppId(whatsappNumber);
     await waitForComplaintResponseDelay();
-    await safeSendMessage(waClient, target, message);
+    // Send to both user and complaint sender concurrently
+    const results = await Promise.allSettled([
+      safeSendMessage(waClient, target, message),
+      safeSendMessage(waClient, chatId, message),
+    ]);
+    
+    // Check if at least one message was sent successfully
+    if (results.every(r => r.status === 'rejected')) {
+      throw new Error(`Gagal mengirim pesan ke user (${target}) dan admin (${chatId}).`);
+    }
   } else if (channel === "email") {
     if (!normalizedEmail) {
       throw new Error("Email pelapor tidak tersedia.");
     }
     const subject = `Tindak Lanjut Laporan Cicero - ${reporterName}`;
     await waitForComplaintResponseDelay();
-    await sendComplaintEmail(normalizedEmail, subject, message);
+    // Send email and WhatsApp message concurrently
+    const results = await Promise.allSettled([
+      sendComplaintEmail(normalizedEmail, subject, message),
+      safeSendMessage(waClient, chatId, message),
+    ]);
+    
+    // Check if at least one delivery was successful
+    if (results.every(r => r.status === 'rejected')) {
+      throw new Error(`Gagal mengirim email (${normalizedEmail}) dan pesan ke admin (${chatId}).`);
+    }
   } else {
-    throw new Error("Kanal pengiriman respon tidak tersedia.");
+    // When user's WhatsApp number is empty, only send to complaint sender
+    await waitForComplaintResponseDelay();
+    await safeSendMessage(waClient, chatId, message);
   }
 
   return { reporterName, nrp, channel };
@@ -213,7 +233,7 @@ async function processComplaintResolution(session, chatId, waClient) {
   }
 
   try {
-    const { reporterName, nrp: reporterNrp } = await sendComplaintResponse(session, waClient);
+    const { reporterName, nrp: reporterNrp } = await sendComplaintResponse(session, waClient, chatId);
     const adminSummary = [
       "📨 *Ringkasan Respon Komplain*",
       "Respon telah disampaikan kepada pelapor. Mohon catat tindak lanjut berikut sebagai arsip:",
