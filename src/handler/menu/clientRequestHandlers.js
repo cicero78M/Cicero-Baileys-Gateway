@@ -108,10 +108,16 @@ async function sendComplaintResponse(session, waClient, chatId) {
     const target = formatToWhatsAppId(whatsappNumber);
     await waitForComplaintResponseDelay();
     // Send to both user and complaint sender concurrently
-    await Promise.all([
+    const results = await Promise.allSettled([
       safeSendMessage(waClient, target, message),
       safeSendMessage(waClient, chatId, message),
     ]);
+    
+    // Check if at least one message was sent successfully
+    const allFailed = results.every(r => r.status === 'rejected');
+    if (allFailed) {
+      throw new Error("Gagal mengirim pesan ke user dan admin.");
+    }
   } else if (channel === "email") {
     if (!normalizedEmail) {
       throw new Error("Email pelapor tidak tersedia.");
@@ -119,10 +125,16 @@ async function sendComplaintResponse(session, waClient, chatId) {
     const subject = `Tindak Lanjut Laporan Cicero - ${reporterName}`;
     await waitForComplaintResponseDelay();
     // Send email and WhatsApp message concurrently
-    await Promise.all([
+    const results = await Promise.allSettled([
       sendComplaintEmail(normalizedEmail, subject, message),
       safeSendMessage(waClient, chatId, message),
     ]);
+    
+    // Check if at least one delivery was successful
+    const allFailed = results.every(r => r.status === 'rejected');
+    if (allFailed) {
+      throw new Error("Gagal mengirim email dan pesan WhatsApp.");
+    }
   } else {
     // When user's WhatsApp number is empty, only send to complaint sender
     await waitForComplaintResponseDelay();
