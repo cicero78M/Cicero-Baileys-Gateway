@@ -114,9 +114,8 @@ async function sendComplaintResponse(session, waClient, chatId) {
     ]);
     
     // Check if at least one message was sent successfully
-    const allFailed = results.every(r => r.status === 'rejected');
-    if (allFailed) {
-      throw new Error("Gagal mengirim pesan ke user dan admin.");
+    if (results.every(r => r.status === 'rejected')) {
+      throw new Error(`Gagal mengirim pesan ke user (${target}) dan admin (${chatId}).`);
     }
   } else if (channel === "email") {
     if (!normalizedEmail) {
@@ -131,9 +130,8 @@ async function sendComplaintResponse(session, waClient, chatId) {
     ]);
     
     // Check if at least one delivery was successful
-    const allFailed = results.every(r => r.status === 'rejected');
-    if (allFailed) {
-      throw new Error("Gagal mengirim email dan pesan WhatsApp.");
+    if (results.every(r => r.status === 'rejected')) {
+      throw new Error(`Gagal mengirim email (${normalizedEmail}) dan pesan ke admin (${chatId}).`);
     }
   } else {
     // When user's WhatsApp number is empty, only send to complaint sender
