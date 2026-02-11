@@ -172,3 +172,14 @@ Parser command pada `createHandleMessage(...)->processMessage` dan `handleGatewa
 4. **Fallback minimal** dengan balasan singkat: `fitur tidak tersedia`.
 
 Perubahan ini sekaligus menghapus cabang parser non-minimal scope seperti menu `oprrequest`, `userrequest`, `dirrequest`, `dashrequest`, serta command prefiks admin lama (`addnewclient#...`, `fetchinsta#...`) dari jalur parsing pesan utama.
+
+## 6) Catatan Refactor Import & Session Helper
+
+Pada pembaruan modul `src/service/waService.js`, dependensi parser dipersempit agar tetap konsisten dengan minimal scope:
+
+- Import handler menu dipertahankan hanya untuk bulk deletion (`processBulkDeletionRequest` + `BULK_STATUS_HEADER_REGEX`) dari `clientRequestHandlers`.
+- Integrasi komplain tetap melalui service `handleComplaintMessageIfApplicable`.
+- Import helper sesi yang tidak lagi dipakai pada parser minimal (misalnya timeout helper/operator helper yang tidak dipanggil) dihapus.
+- Inisialisasi sesi bulk dirapikan agar tidak melakukan lookup `getSession(chatId)` berulang sebelum memanggil `processBulkDeletionRequest`.
+
+Refactor ini tidak mengubah kontrak alur minimal: complaint-first handling, dilanjut deteksi bulk deletion, lalu fallback `fitur tidak tersedia`.

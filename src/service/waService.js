@@ -72,16 +72,11 @@ import {
   userMenuContext,
   updateUsernameSession,
   userRequestLinkSessions,
-  knownUserSet,
   waBindSessions,
-  setBindTimeout,
   operatorOptionSessions,
-  setOperatorOptionTimeout,
   adminOptionSessions,
-  setAdminOptionTimeout,
   setSession,
   getSession,
-  clearSession,
 } from "../utils/sessionsHelper.js";
 
 import {
@@ -1479,13 +1474,12 @@ export function createHandleMessage(waClient, options = {}) {
         session?.menu === "clientrequest" &&
         ["bulkStatus_process", "bulkStatus_selectRole"].includes(session?.step);
       if (BULK_STATUS_HEADER_REGEX.test(normalizedText) || isBulkSession) {
-        const bulkSession =
-          getSession(chatId) || { menu: "clientrequest", step: "bulkStatus_process" };
-        if (!getSession(chatId)) {
-          setSession(chatId, bulkSession);
+        const bulkSession = getSession(chatId);
+        if (!bulkSession) {
+          setSession(chatId, { menu: "clientrequest", step: "bulkStatus_process" });
         }
         await processBulkDeletionRequest({
-          session: getSession(chatId),
+          session: bulkSession || getSession(chatId),
           chatId,
           text,
           waClient,
