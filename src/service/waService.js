@@ -63,7 +63,7 @@ import { getUsersByClient } from "../model/userModel.js";
 import {
   BULK_STATUS_HEADER_REGEX,
   processBulkDeletionRequest,
-} from "../handler/menu/clientRequestHandlers.js";
+} from "../handler/wa/bulkDeletionHandler.js";
 
 import { handleFetchKomentarTiktokBatch } from "../handler/fetchengagement/fetchCommentTiktok.js";
 
