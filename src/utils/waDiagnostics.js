@@ -5,15 +5,20 @@
 
 export function logWaServiceDiagnostics(
   waClient,
-  waUserClient,
-  waGatewayClient,
+  waUserClient = null,
+  waGatewayClient = null,
   readinessSummary = null
 ) {
   const clients = [
-    { name: 'waClient', label: 'WA', client: waClient },
-    { name: 'waUserClient', label: 'WA-USER', client: waUserClient },
-    { name: 'waGatewayClient', label: 'WA-GATEWAY', client: waGatewayClient },
+    { name: 'waClient', label: 'WA-GATEWAY', client: waClient },
   ];
+  if (waUserClient) {
+    clients.push({ name: 'waUserClient', label: 'WA-USER', client: waUserClient });
+  }
+  if (waGatewayClient) {
+    clients.push({ name: 'waGatewayClient', label: 'WA-GATEWAY', client: waGatewayClient });
+  }
+  
   const readinessClientEntries = Array.isArray(readinessSummary?.clients)
     ? readinessSummary.clients
     : Object.values(readinessSummary?.clients || {});
@@ -66,12 +71,16 @@ export function logWaServiceDiagnostics(
   console.log('\n===========================================\n');
 }
 
-export function checkMessageListenersAttached(waClient, waUserClient, waGatewayClient) {
+export function checkMessageListenersAttached(waClient, waUserClient = null, waGatewayClient = null) {
   const clients = [
     { name: 'waClient', client: waClient },
-    { name: 'waUserClient', client: waUserClient },
-    { name: 'waGatewayClient', client: waGatewayClient },
   ];
+  if (waUserClient) {
+    clients.push({ name: 'waUserClient', client: waUserClient });
+  }
+  if (waGatewayClient) {
+    clients.push({ name: 'waGatewayClient', client: waGatewayClient });
+  }
 
   let allGood = true;
   clients.forEach(({ name, client }) => {

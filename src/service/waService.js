@@ -532,12 +532,8 @@ function formatVerificationSummary(
 
 const DEFAULT_AUTH_DATA_PARENT_DIR = ".cicero";
 const DEFAULT_AUTH_DATA_DIR = "wwebjs_auth";
-const defaultUserClientId = "wa-userrequest";
 const defaultGatewayClientId = "wa-gateway";
-const rawUserClientId = String(env.USER_WA_CLIENT_ID || "");
 const rawGatewayClientId = String(env.GATEWAY_WA_CLIENT_ID || "");
-const normalizedUserClientId = rawUserClientId.trim();
-const normalizedUserClientIdLower = normalizedUserClientId.toLowerCase();
 const trimmedGatewayClientId = rawGatewayClientId.trim();
 const normalizedGatewayClientId = trimmedGatewayClientId.toLowerCase();
 const resolvedGatewayClientId = normalizedGatewayClientId || undefined;
@@ -587,49 +583,6 @@ const throwClientIdError = (message) => {
   throw new Error(`[WA] ${message}`);
 };
 
-const ensureUserClientIdConsistency = () => {
-  const authDataPath = resolveAuthDataPath();
-  if (!normalizedUserClientIdLower) {
-    throwClientIdError(
-      "USER_WA_CLIENT_ID kosong; set nilai unik lowercase (contoh: wa-userrequest-prod)."
-    );
-  }
-  if (
-    normalizedUserClientId &&
-    normalizedUserClientIdLower &&
-    normalizedUserClientId !== normalizedUserClientIdLower
-  ) {
-    const sessionPath = findSessionCaseMismatch(
-      authDataPath,
-      normalizedUserClientIdLower
-    );
-    const sessionHint = sessionPath
-      ? ` Ditemukan session berbeda di ${sessionPath}.`
-      : "";
-    throwClientIdError(
-      `USER_WA_CLIENT_ID harus lowercase. Nilai "${normalizedUserClientId}" tidak konsisten.${sessionHint} ` +
-        "Perbarui env/folder session agar cocok sebelum menjalankan proses."
-    );
-  }
-  if (normalizedUserClientIdLower === defaultUserClientId) {
-    throwClientIdError(
-      `USER_WA_CLIENT_ID masih default (${defaultUserClientId}); clientId harus unik dan lowercase. ` +
-        `Perbarui env dan bersihkan session lama di ${authDataPath}.`
-    );
-  }
-  const mismatchedSessionPath = findSessionCaseMismatch(
-    authDataPath,
-    normalizedUserClientIdLower
-  );
-  if (mismatchedSessionPath) {
-    throwClientIdError(
-      `Folder session "${path.basename(mismatchedSessionPath)}" tidak konsisten dengan ` +
-        `USER_WA_CLIENT_ID="${normalizedUserClientIdLower}". Rename atau hapus session lama di ` +
-        `${mismatchedSessionPath} agar konsisten.`
-    );
-  }
-};
-
 const ensureGatewayClientIdConsistency = () => {
   const authDataPath = resolveAuthDataPath();
   if (
@@ -668,54 +621,17 @@ const ensureGatewayClientIdConsistency = () => {
   }
 };
 
-const ensureClientIdUniqueness = () => {
-  if (normalizedUserClientIdLower === normalizedGatewayClientId) {
-    throwClientIdError(
-      `USER_WA_CLIENT_ID dan GATEWAY_WA_CLIENT_ID sama (${normalizedGatewayClientId}); ` +
-        "clientId harus unik. Perbarui env sebelum menjalankan proses."
-    );
-  }
-};
-
-ensureUserClientIdConsistency();
 ensureGatewayClientIdConsistency();
-ensureClientIdUniqueness();
 
-// Initialize WhatsApp client via Baileys
-export let waClient = await createBaileysClient();
-export let waUserClient = await createBaileysClient(env.USER_WA_CLIENT_ID);
-export let waGatewayClient = await createBaileysClient(resolvedGatewayClientId);
+// Initialize WhatsApp client via Baileys (Gateway client only)
+export let waClient = await createBaileysClient(resolvedGatewayClientId);
 
-const logClientIdIssue = (envVar, issueMessage) => {
-  console.error(`[WA] ${envVar} ${issueMessage}; clientId harus unik.`);
-};
-
-if (!normalizedUserClientId) {
-  logClientIdIssue("USER_WA_CLIENT_ID", "kosong");
-}
 if (!normalizedGatewayClientId) {
-  logClientIdIssue("GATEWAY_WA_CLIENT_ID", "kosong");
-}
-if (normalizedUserClientId === defaultUserClientId) {
-  logClientIdIssue(
-    "USER_WA_CLIENT_ID",
-    `masih default (${defaultUserClientId})`
-  );
+  console.error(`[WA] GATEWAY_WA_CLIENT_ID kosong; clientId harus diset.`);
 }
 if (normalizedGatewayClientId === defaultGatewayClientId) {
-  logClientIdIssue(
-    "GATEWAY_WA_CLIENT_ID",
-    `masih default (${defaultGatewayClientId})`
-  );
-}
-if (
-  normalizedUserClientId &&
-  normalizedGatewayClientId &&
-  normalizedUserClientId === normalizedGatewayClientId
-) {
   console.error(
-    `[WA] USER_WA_CLIENT_ID dan GATEWAY_WA_CLIENT_ID sama (${normalizedUserClientId}); ` +
-      "clientId harus unik."
+    `[WA] GATEWAY_WA_CLIENT_ID masih default (${defaultGatewayClientId}); clientId harus unik.`
   );
 }
 
@@ -726,14 +642,9 @@ const readinessDiagnosticsIntervalMs = Math.max(
   Number(process.env.WA_READINESS_DIAGNOSTIC_INTERVAL_MS) || 120000
 );
 const defaultReadyTimeoutMs = Number.isNaN(
-  Number(process.env.WA_READY_TIMEOUT_MS)
-)
-  ? 60000
-  : Number(process.env.WA_READY_TIMEOUT_MS);
-const gatewayReadyTimeoutMs = Number.isNaN(
   Number(process.env.WA_GATEWAY_READY_TIMEOUT_MS)
 )
-  ? defaultReadyTimeoutMs
+  ? 60000
   : Number(process.env.WA_GATEWAY_READY_TIMEOUT_MS);
 const lifecycleEventInFlight = new WeakMap();
 const lifecycleEventQueued = new WeakMap();
@@ -748,9 +659,6 @@ function getClientReadyTimeoutMs(client) {
   const clientOverride = client?.readyTimeoutMs;
   if (typeof clientOverride === "number" && !Number.isNaN(clientOverride)) {
     return clientOverride;
-  }
-  if (client === waGatewayClient) {
-    return gatewayReadyTimeoutMs;
   }
   return defaultReadyTimeoutMs;
 }
@@ -1024,9 +932,7 @@ function snapshotReadinessState({ readinessState, client, observedState = null }
 
 function getWaReadinessSummarySync() {
   const clientEntries = [
-    { key: "wa", client: waClient, label: "WA" },
-    { key: "waUser", client: waUserClient, label: "WA-USER" },
-    { key: "waGateway", client: waGatewayClient, label: "WA-GATEWAY" },
+    { key: "wa", client: waClient, label: "WA-GATEWAY" },
   ];
 
   const clients = {};
@@ -1045,8 +951,6 @@ export async function getWaReadinessSummary() {
   const summary = getWaReadinessSummarySync();
   const clientEntries = [
     { key: "wa", client: waClient },
-    { key: "waUser", client: waUserClient },
-    { key: "waGateway", client: waGatewayClient },
   ];
 
   await Promise.all(
@@ -1113,10 +1017,7 @@ function startReadinessDiagnosticsLogger() {
   }, readinessDiagnosticsIntervalMs).unref?.();
 }
 
-registerClientReadiness(waClient, "WA");
-registerClientReadiness(waUserClient, "WA-USER");
-registerClientReadiness(waGatewayClient, "WA-GATEWAY");
-waGatewayClient.readyTimeoutMs = gatewayReadyTimeoutMs;
+registerClientReadiness(waClient, "WA-GATEWAY");
 
 export function queueAdminNotification(message) {
   adminNotificationQueue.push(message);
@@ -1243,8 +1144,6 @@ export function waitForWaReady(timeoutMs) {
 
 // Expose readiness helper for consumers like safeSendMessage
 waClient.waitForWaReady = () => waitForClientReady(waClient);
-waUserClient.waitForWaReady = () => waitForClientReady(waUserClient);
-waGatewayClient.waitForWaReady = () => waitForClientReady(waGatewayClient);
 
 // Pastikan semua pengiriman pesan menunggu hingga client siap
 function wrapSendMessage(client) {
@@ -1338,15 +1237,13 @@ function wrapSendMessage(client) {
   };
 }
 wrapSendMessage(waClient);
-wrapSendMessage(waUserClient);
-wrapSendMessage(waGatewayClient);
 
 /**
  * Wait for all WhatsApp client message queues to be idle (empty and no pending tasks)
  * This ensures all messages have been sent before the caller continues
  */
 export async function waitForAllMessageQueues() {
-  const clients = [waClient, waUserClient, waGatewayClient];
+  const clients = [waClient];
   const idlePromises = [];
   
   for (const client of clients) {
@@ -1362,60 +1259,50 @@ export async function waitForAllMessageQueues() {
 }
 
 export function sendGatewayMessage(jid, text) {
-  const waFallbackClients = [
-    { client: waGatewayClient, label: "WA-GATEWAY" },
-    { client: waClient, label: "WA" },
-    { client: waUserClient, label: "WA-USER" },
-  ];
-  return sendWithClientFallback({
-    chatId: jid,
-    message: text,
-    clients: waFallbackClients,
-    reportClient: waClient,
-    reportContext: { source: "sendGatewayMessage", jid },
-  });
+  // Now using single waClient (formerly waGatewayClient)
+  return safeSendMessage(waClient, jid, text);
 }
 
 // Handle QR code (scan)
 waClient.on("qr", (qr) => {
-  const state = getClientReadinessState(waClient, "WA");
+  const state = getClientReadinessState(waClient, "WA-GATEWAY");
   state.lastQrAt = Date.now();
   state.lastQrPayloadSeen = qr;
   state.awaitingQrScan = true;
   qrcode.generate(qr, { small: true });
-  writeWaStructuredLog("debug", buildWaStructuredLog({ clientId: waClient?.clientId || null, label: "WA", event: "qr" }), { debugOnly: true });
+  writeWaStructuredLog("debug", buildWaStructuredLog({ clientId: waClient?.clientId || null, label: "WA-GATEWAY", event: "qr" }), { debugOnly: true });
 });
 
 waClient.on("authenticated", (session) => {
   const sessionInfo = session ? "session received" : "no session payload";
-  writeWaStructuredLog("debug", buildWaStructuredLog({ clientId: waClient?.clientId || null, label: "WA", event: "authenticated", errorCode: sessionInfo }), { debugOnly: true });
+  writeWaStructuredLog("debug", buildWaStructuredLog({ clientId: waClient?.clientId || null, label: "WA-GATEWAY", event: "authenticated", errorCode: sessionInfo }), { debugOnly: true });
   clearLogoutAwaitingQr(waClient);
 });
 
 waClient.on("auth_failure", (message) => {
   runSingleLifecycleTransition(
     waClient,
-    "WA",
+    "WA-GATEWAY",
     "auth_failure",
     message,
     () => {
       setClientNotReady(waClient);
-      const state = getClientReadinessState(waClient, "WA");
+      const state = getClientReadinessState(waClient, "WA-GATEWAY");
       state.lastAuthFailureAt = Date.now();
       state.lastAuthFailureMessage = message || null;
-      writeWaStructuredLog("warn", buildWaStructuredLog({ clientId: waClient?.clientId || null, label: "WA", event: "auth_failure", errorCode: "AUTH_FAILURE", errorMessage: message || null }));
+      writeWaStructuredLog("warn", buildWaStructuredLog({ clientId: waClient?.clientId || null, label: "WA-GATEWAY", event: "auth_failure", errorCode: "AUTH_FAILURE", errorMessage: message || null }));
     }
   );
 });
 
 waClient.on("disconnected", (reason) => {
-  runSingleLifecycleTransition(waClient, "WA", "disconnected", reason, () => {
+  runSingleLifecycleTransition(waClient, "WA-GATEWAY", "disconnected", reason, () => {
     const normalizedReason = normalizeDisconnectReason(reason);
-    const state = getClientReadinessState(waClient, "WA");
+    const state = getClientReadinessState(waClient, "WA-GATEWAY");
     state.lastDisconnectReason = normalizedReason || null;
     state.awaitingQrScan = isLogoutDisconnectReason(normalizedReason);
     setClientNotReady(waClient);
-    writeWaStructuredLog("warn", buildWaStructuredLog({ clientId: waClient?.clientId || null, label: "WA", event: "disconnected", errorCode: normalizedReason || null }));
+    writeWaStructuredLog("warn", buildWaStructuredLog({ clientId: waClient?.clientId || null, label: "WA-GATEWAY", event: "disconnected", errorCode: normalizedReason || null }));
   });
 });
 
@@ -1431,149 +1318,9 @@ waClient.on("change_state", (state) => {
     return;
   }
   writeRateLimitedWaWarn(
-    `unknown-state:WA:${normalizedState || 'empty'}`,
-    buildWaStructuredLog({
-      clientId: waClient?.clientId || null,
-      label: "WA",
-      event: "change_state_unknown",
-      errorCode: normalizedState || "UNKNOWN_STATE",
-    })
-  );
-});
-
-waUserClient.on("qr", (qr) => {
-  const state = getClientReadinessState(waUserClient, "WA-USER");
-  state.lastQrAt = Date.now();
-  state.lastQrPayloadSeen = qr;
-  state.awaitingQrScan = true;
-  qrcode.generate(qr, { small: true });
-  writeWaStructuredLog("debug", buildWaStructuredLog({ clientId: waUserClient?.clientId || null, label: "WA-USER", event: "qr" }), { debugOnly: true });
-});
-
-waUserClient.on("authenticated", (session) => {
-  const sessionInfo = session ? "session received" : "no session payload";
-  writeWaStructuredLog("debug", buildWaStructuredLog({ clientId: waUserClient?.clientId || null, label: "WA-USER", event: "authenticated", errorCode: sessionInfo }), { debugOnly: true });
-  clearLogoutAwaitingQr(waUserClient);
-});
-
-waUserClient.on("auth_failure", (message) => {
-  runSingleLifecycleTransition(
-    waUserClient,
-    "WA-USER",
-    "auth_failure",
-    message,
-    () => {
-      setClientNotReady(waUserClient);
-      const state = getClientReadinessState(waUserClient, "WA-USER");
-      state.lastAuthFailureAt = Date.now();
-      state.lastAuthFailureMessage = message || null;
-      writeWaStructuredLog("warn", buildWaStructuredLog({ clientId: waUserClient?.clientId || null, label: "WA-USER", event: "auth_failure", errorCode: "AUTH_FAILURE", errorMessage: message || null }));
-    }
-  );
-});
-
-waUserClient.on("disconnected", (reason) => {
-  runSingleLifecycleTransition(
-    waUserClient,
-    "WA-USER",
-    "disconnected",
-    reason,
-    () => {
-      const normalizedReason = normalizeDisconnectReason(reason);
-      const state = getClientReadinessState(waUserClient, "WA-USER");
-      state.lastDisconnectReason = normalizedReason || null;
-      state.awaitingQrScan = isLogoutDisconnectReason(normalizedReason);
-      setClientNotReady(waUserClient);
-      writeWaStructuredLog("warn", buildWaStructuredLog({ clientId: waUserClient?.clientId || null, label: "WA-USER", event: "disconnected", errorCode: normalizedReason || null }));
-    }
-  );
-});
-
-waUserClient.on("ready", () => {
-  clearLogoutAwaitingQr(waUserClient);
-  markClientReady(waUserClient, "ready");
-});
-
-waUserClient.on("change_state", (state) => {
-  const normalizedState = String(state || "").toLowerCase();
-  if (normalizedState === "connected" || normalizedState === "open") {
-    markClientReady(waUserClient, `change_state_${normalizedState}`);
-    return;
-  }
-  writeRateLimitedWaWarn(
-    `unknown-state:WA-USER:${normalizedState || 'empty'}`,
-    buildWaStructuredLog({
-      clientId: waUserClient?.clientId || null,
-      label: "WA-USER",
-      event: "change_state_unknown",
-      errorCode: normalizedState || "UNKNOWN_STATE",
-    })
-  );
-});
-
-waGatewayClient.on("qr", (qr) => {
-  const state = getClientReadinessState(waGatewayClient, "WA-GATEWAY");
-  state.lastQrAt = Date.now();
-  state.lastQrPayloadSeen = qr;
-  state.awaitingQrScan = true;
-  qrcode.generate(qr, { small: true });
-  writeWaStructuredLog("debug", buildWaStructuredLog({ clientId: waGatewayClient?.clientId || null, label: "WA-GATEWAY", event: "qr" }), { debugOnly: true });
-});
-
-waGatewayClient.on("authenticated", (session) => {
-  const sessionInfo = session ? "session received" : "no session payload";
-  writeWaStructuredLog("debug", buildWaStructuredLog({ clientId: waGatewayClient?.clientId || null, label: "WA-GATEWAY", event: "authenticated", errorCode: sessionInfo }), { debugOnly: true });
-  clearLogoutAwaitingQr(waGatewayClient);
-});
-
-waGatewayClient.on("auth_failure", (message) => {
-  runSingleLifecycleTransition(
-    waGatewayClient,
-    "WA-GATEWAY",
-    "auth_failure",
-    message,
-    () => {
-      setClientNotReady(waGatewayClient);
-      const state = getClientReadinessState(waGatewayClient, "WA-GATEWAY");
-      state.lastAuthFailureAt = Date.now();
-      state.lastAuthFailureMessage = message || null;
-      writeWaStructuredLog("warn", buildWaStructuredLog({ clientId: waGatewayClient?.clientId || null, label: "WA-GATEWAY", event: "auth_failure", errorCode: "AUTH_FAILURE", errorMessage: message || null }));
-    }
-  );
-});
-
-waGatewayClient.on("disconnected", (reason) => {
-  runSingleLifecycleTransition(
-    waGatewayClient,
-    "WA-GATEWAY",
-    "disconnected",
-    reason,
-    () => {
-      const normalizedReason = normalizeDisconnectReason(reason);
-      const state = getClientReadinessState(waGatewayClient, "WA-GATEWAY");
-      state.lastDisconnectReason = normalizedReason || null;
-      state.awaitingQrScan = isLogoutDisconnectReason(normalizedReason);
-      setClientNotReady(waGatewayClient);
-      writeWaStructuredLog("warn", buildWaStructuredLog({ clientId: waGatewayClient?.clientId || null, label: "WA-GATEWAY", event: "disconnected", errorCode: normalizedReason || null }));
-    }
-  );
-});
-
-waGatewayClient.on("ready", () => {
-  clearLogoutAwaitingQr(waGatewayClient);
-  markClientReady(waGatewayClient, "ready");
-});
-
-waGatewayClient.on("change_state", (state) => {
-  const normalizedState = String(state || "").toLowerCase();
-  if (normalizedState === "connected" || normalizedState === "open") {
-    markClientReady(waGatewayClient, `change_state_${normalizedState}`);
-    return;
-  }
-  writeRateLimitedWaWarn(
     `unknown-state:WA-GATEWAY:${normalizedState || 'empty'}`,
     buildWaStructuredLog({
-      clientId: waGatewayClient?.clientId || null,
+      clientId: waClient?.clientId || null,
       label: "WA-GATEWAY",
       event: "change_state_unknown",
       errorCode: normalizedState || "UNKNOWN_STATE",
@@ -4203,12 +3950,8 @@ Ketik *angka menu* di atas, atau *batal* untuk keluar.
 }
 
 const handleMessage = createHandleMessage(waClient, {
-  allowUserMenu: false,
-  clientLabel: "[WA]",
-});
-const handleUserMessage = createHandleMessage(waUserClient, {
   allowUserMenu: true,
-  clientLabel: "[WA-USER]",
+  clientLabel: "[WA-GATEWAY]",
 });
 
 async function processGatewayBulkDeletion(chatId, text) {
@@ -4222,7 +3965,7 @@ async function processGatewayBulkDeletion(chatId, text) {
     session: getSession(chatId),
     chatId,
     text,
-    waClient: waGatewayClient,
+    waClient: waClient,
     userModel,
   });
 }
@@ -4308,9 +4051,9 @@ async function ensureGatewayAllowedGroupsLoaded(reason = "") {
 refreshGatewayAllowedGroups("initial warmup").catch(() => {});
 
 export async function handleGatewayMessage(msg) {
-  const readinessState = getClientReadinessState(waGatewayClient, "WA-GATEWAY");
+  const readinessState = getClientReadinessState(waClient, "WA-GATEWAY");
   if (!readinessState.ready) {
-    waGatewayClient
+    waClient
       .waitForWaReady()
       .catch((err) => {
         console.warn(
@@ -4376,7 +4119,7 @@ export async function handleGatewayMessage(msg) {
         session: getSession(chatId),
         chatId,
         text: "",
-        waClient: waGatewayClient,
+        waClient: waClient,
         clientLabel: "[WA-GATEWAY]",
         args: [pool, userModel, clientService],
         invalidStepMessage:
@@ -4389,14 +4132,14 @@ export async function handleGatewayMessage(msg) {
 
     if (lowered === "batal") {
       clearSession(chatId);
-      await waGatewayClient.sendMessage(
+      await waClient.sendMessage(
         chatId,
         "Baik, penambahan akun resmi Satbinmas dibatalkan."
       );
       return;
     }
 
-    await waGatewayClient.sendMessage(
+    await waClient.sendMessage(
       chatId,
       session.prompt ||
         "Belum ada akun resmi yang terdaftar. Balas *ya* untuk menambahkan akun resmi Satbinmas atau *batal* untuk membatalkan."
@@ -4408,7 +4151,7 @@ export async function handleGatewayMessage(msg) {
     session,
     chatId,
     text,
-    waClient: waGatewayClient,
+    waClient: waClient,
     clientLabel: "[WA-GATEWAY]",
     pool,
     userModel,
@@ -4426,7 +4169,7 @@ export async function handleGatewayMessage(msg) {
 
   if (normalizedText.startsWith("#satbinmasofficial")) {
     if (!isGatewayForward) {
-      await waGatewayClient.sendMessage(
+      await waClient.sendMessage(
         chatId,
         "❌ Permintaan ini hanya diproses untuk pesan yang diteruskan melalui WA Gateway."
       );
@@ -4435,7 +4178,7 @@ export async function handleGatewayMessage(msg) {
 
     // Check if user is admin
     if (!senderId || !isAdminWhatsApp(senderId)) {
-      await waGatewayClient.sendMessage(
+      await waClient.sendMessage(
         chatId,
         "❌ Fitur ini hanya tersedia untuk administrator."
       );
@@ -4445,7 +4188,7 @@ export async function handleGatewayMessage(msg) {
     // Note: This feature previously relied on dashboard_user for client_id mapping.
     // After dashboard removal, admins need to specify client_id explicitly.
     // TODO: Implement client_id selection mechanism for satbinmas official account management
-    await waGatewayClient.sendMessage(
+    await waClient.sendMessage(
       chatId,
       "ℹ️ Fitur ini sedang dalam perbaikan setelah penghapusan sistem dashboard.\n" +
       "Untuk sementara, silakan hubungi developer untuk konfigurasi akun resmi Satbinmas."
@@ -4469,7 +4212,7 @@ export async function handleGatewayMessage(msg) {
     adminOptionSessions,
     setSession,
     getSession,
-    waClient: waGatewayClient,
+    waClient: waClient,
     pool,
     userModel,
   });
@@ -4479,64 +4222,17 @@ export async function handleGatewayMessage(msg) {
   }
 }
 
-registerClientMessageHandler(waClient, "wwebjs", handleMessage);
-registerClientMessageHandler(waUserClient, "wwebjs-user", handleUserMessage);
-registerClientMessageHandler(waGatewayClient, "wwebjs-gateway", handleGatewayMessage);
+registerClientMessageHandler(waClient, "wwebjs-gateway", handleGatewayMessage);
 
 if (shouldInitWhatsAppClients) {
   startReadinessDiagnosticsLogger();
-  writeWaStructuredLog("info", buildWaStructuredLog({ label: "WA", event: "wa_message_listener_attach_start" }));
+  writeWaStructuredLog("info", buildWaStructuredLog({ label: "WA-GATEWAY", event: "wa_message_listener_attach_start" }));
   
   waClient.on('message', (msg) => {
     writeWaStructuredLog(
       "debug",
       buildWaStructuredLog({
         clientId: waClient?.clientId || null,
-        label: "WA",
-        event: "message_received",
-        jid: msg?.from || null,
-        messageId: msg?.id?._serialized || msg?.id?.id || null,
-      }),
-      { debugOnly: true }
-    );
-    handleIncoming('baileys', msg, handleMessage);
-  });
-
-  waUserClient.on('message', (msg) => {
-    const from = msg.from || '';
-    if (from.endsWith('@g.us') || from === 'status@broadcast') {
-      writeWaStructuredLog(
-        "debug",
-        buildWaStructuredLog({
-          clientId: waUserClient?.clientId || null,
-          label: "WA-USER",
-          event: "message_ignored",
-          jid: from || null,
-          errorCode: "GROUP_OR_STATUS",
-        }),
-        { debugOnly: true }
-      );
-      return;
-    }
-    writeWaStructuredLog(
-      "debug",
-      buildWaStructuredLog({
-        clientId: waUserClient?.clientId || null,
-        label: "WA-USER",
-        event: "message_received",
-        jid: msg?.from || null,
-        messageId: msg?.id?._serialized || msg?.id?.id || null,
-      }),
-      { debugOnly: true }
-    );
-    handleIncoming('baileys-user', msg, handleUserMessage);
-  });
-
-  waGatewayClient.on('message', (msg) => {
-    writeWaStructuredLog(
-      "debug",
-      buildWaStructuredLog({
-        clientId: waGatewayClient?.clientId || null,
         label: "WA-GATEWAY",
         event: "message_received",
         jid: msg?.from || null,
@@ -4547,24 +4243,20 @@ if (shouldInitWhatsAppClients) {
     handleIncoming('baileys-gateway', msg, handleGatewayMessage);
   });
 
-  writeWaStructuredLog("info", buildWaStructuredLog({ label: "WA", event: "wa_message_listener_attach_ready" }));
+  writeWaStructuredLog("info", buildWaStructuredLog({ label: "WA-GATEWAY", event: "wa_message_listener_attach_ready" }));
   writeWaStructuredLog(
     "debug",
     buildWaStructuredLog({
-      label: "WA",
+      label: "WA-GATEWAY",
       event: "wa_message_listener_count",
       waClientCount: waClient.listenerCount('message'),
-      waUserClientCount: waUserClient.listenerCount('message'),
-      waGatewayClientCount: waGatewayClient.listenerCount('message'),
     }),
     { debugOnly: true }
   );
 
 
   const clientsToInit = [
-    { label: "WA", client: waClient },
-    { label: "WA-USER", client: waUserClient },
-    { label: "WA-GATEWAY", client: waGatewayClient },
+    { label: "WA-GATEWAY", client: waClient },
   ];
 
   const initPromises = clientsToInit.map(({ label, client }) => {
@@ -4603,11 +4295,11 @@ if (shouldInitWhatsAppClients) {
   // Diagnostic checks to ensure message listeners are attached
   logWaServiceDiagnostics(
     waClient,
-    waUserClient,
-    waGatewayClient,
+    null,
+    null,
     getWaReadinessSummarySync()
   );
-  checkMessageListenersAttached(waClient, waUserClient, waGatewayClient);
+  checkMessageListenersAttached(waClient, null, null);
 }
 
 export default waClient;
