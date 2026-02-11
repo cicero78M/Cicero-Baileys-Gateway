@@ -183,3 +183,18 @@ Pada pembaruan modul `src/service/waService.js`, dependensi parser dipersempit a
 - Inisialisasi sesi bulk dirapikan agar tidak melakukan lookup `getSession(chatId)` berulang sebelum memanggil `processBulkDeletionRequest`.
 
 Refactor ini tidak mengubah kontrak alur minimal: complaint-first handling, dilanjut deteksi bulk deletion, lalu fallback `fitur tidak tersedia`.
+
+## 6) Pemisahan Modul Bulk Deletion (Pembaruan)
+
+Untuk mengurangi coupling ke menu `clientrequest`, flow bulk deletion dipindahkan ke modul khusus:
+
+- `src/handler/wa/bulkDeletionHandler.js`
+
+Rincian perubahan:
+- Konstanta deteksi header (`BULK_STATUS_HEADER_REGEX`) dan executor `processBulkDeletionRequest` tidak lagi diekspor dari `clientRequestHandlers.js`.
+- `waService.js` sekarang mengimpor flow bulk langsung dari `bulkDeletionHandler.js`.
+- `clientRequestHandlers.js` tetap menggunakan modul yang sama untuk step menu bulk (`bulkStatus_process`, `bulkStatus_chooseRole`, `bulkStatus_applySelection`) agar perilaku chat tetap konsisten.
+
+Dampak:
+- Inisialisasi `waService` tidak lagi menarik dependensi besar menu client hanya untuk fitur bulk deletion.
+- Pengujian parser dan bulk executor dapat dilakukan terisolasi di level handler WA.
