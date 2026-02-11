@@ -1416,7 +1416,9 @@ export function createHandleMessage(waClient, options = {}) {
         return;
       }
 
-      await waClient.sendMessage(chatId, "Perintah lama tidak didukung. Gunakan format komplain atau template bulk deletion yang berlaku.");
+      console.log(
+        `${clientLabel} Ignored non-relevant private message from ${chatId}`
+      );
     };
 
     try {
@@ -1609,7 +1611,9 @@ export async function handleGatewayMessage(msg) {
     return;
   }
 
-  await waClient.sendMessage(chatId, "Perintah lama tidak didukung. Gunakan format komplain atau template bulk deletion yang berlaku.");
+  console.log(
+    `[WA-GATEWAY] Ignored non-relevant message from ${chatId}`
+  );
 }
 
 registerClientMessageHandler(waClient, "wwebjs-gateway", handleGatewayMessage);
