@@ -1416,7 +1416,7 @@ export function createHandleMessage(waClient, options = {}) {
         return;
       }
 
-      await waClient.sendMessage(chatId, "fitur tidak tersedia");
+      await waClient.sendMessage(chatId, "Perintah lama tidak didukung. Gunakan format komplain atau template bulk deletion yang berlaku.");
     };
 
     try {
@@ -1609,7 +1609,7 @@ export async function handleGatewayMessage(msg) {
     return;
   }
 
-  await waClient.sendMessage(chatId, "fitur tidak tersedia");
+  await waClient.sendMessage(chatId, "Perintah lama tidak didukung. Gunakan format komplain atau template bulk deletion yang berlaku.");
 }
 
 registerClientMessageHandler(waClient, "wwebjs-gateway", handleGatewayMessage);

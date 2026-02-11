@@ -407,6 +407,10 @@ export async function processBulkDeletionRequest({
   }
 
   if (!BULK_STATUS_HEADER_REGEX.test(trimmed)) {
+    await waClient.sendMessage(
+      chatId,
+      "Format tidak valid. Gunakan judul `Permohonan Penghapusan Data Personil – <SATKER>` lalu daftar personel per baris."
+    );
     if (session) {
       delete currentSession.bulkStatusContext;
       currentSession.step = "main";
