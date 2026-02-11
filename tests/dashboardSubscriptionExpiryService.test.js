@@ -22,8 +22,6 @@ jest.unstable_mockModule('../src/utils/waHelper.js', () => ({
 
 jest.unstable_mockModule('../src/service/waService.js', () => ({
   default: {},
-  waGatewayClient: {},
-  waUserClient: {},
 }));
 
 let selectExpiredSubscriptions;
