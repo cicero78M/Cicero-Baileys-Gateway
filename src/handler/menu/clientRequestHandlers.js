@@ -107,20 +107,22 @@ async function sendComplaintResponse(session, waClient, chatId) {
   if (channel === "whatsapp") {
     const target = formatToWhatsAppId(whatsappNumber);
     await waitForComplaintResponseDelay();
-    await safeSendMessage(waClient, target, message);
-    // Also send to complaint sender (chatId)
-    await waitForComplaintResponseDelay();
-    await safeSendMessage(waClient, chatId, message);
+    // Send to both user and complaint sender concurrently
+    await Promise.all([
+      safeSendMessage(waClient, target, message),
+      safeSendMessage(waClient, chatId, message),
+    ]);
   } else if (channel === "email") {
     if (!normalizedEmail) {
       throw new Error("Email pelapor tidak tersedia.");
     }
     const subject = `Tindak Lanjut Laporan Cicero - ${reporterName}`;
     await waitForComplaintResponseDelay();
-    await sendComplaintEmail(normalizedEmail, subject, message);
-    // Also send to complaint sender (chatId)
-    await waitForComplaintResponseDelay();
-    await safeSendMessage(waClient, chatId, message);
+    // Send email and WhatsApp message concurrently
+    await Promise.all([
+      sendComplaintEmail(normalizedEmail, subject, message),
+      safeSendMessage(waClient, chatId, message),
+    ]);
   } else {
     // When user's WhatsApp number is empty, only send to complaint sender
     await waitForComplaintResponseDelay();
