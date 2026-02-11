@@ -1,5 +1,4 @@
-import fs from 'fs';
-import { rm, readFile, stat, mkdir, writeFile } from 'fs/promises';
+import { rm, mkdir } from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { EventEmitter } from 'events';
@@ -170,7 +169,6 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
   // Internal event handlers
   let internalMessageHandler = null;
-  let internalQRHandler = null;
   let internalConnectionUpdateHandler = null;
   let internalCredsUpdateHandler = null;
 
@@ -180,9 +178,6 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     // Remove old handlers if they exist
     if (internalMessageHandler) {
       sock.ev.off('messages.upsert', internalMessageHandler);
-    }
-    if (internalQRHandler) {
-      sock.ev.off('connection.update', internalQRHandler);
     }
     if (internalConnectionUpdateHandler) {
       sock.ev.off('connection.update', internalConnectionUpdateHandler);

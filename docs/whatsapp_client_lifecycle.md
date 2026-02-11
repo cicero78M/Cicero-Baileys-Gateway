@@ -4,7 +4,7 @@ Dokumen ini menjelaskan lifecycle WhatsApp client pada Cicero_V2 setelah penyede
 
 ## Lokasi kode utama
 
-- `src/service/wwebjsAdapter.js` → single source of truth untuk `connect()`, `reinitialize()`, `disconnect()`, serta recovery internal adapter.
+- `src/service/baileysAdapter.js` → single source of truth untuk inisialisasi koneksi, reconnect internal adapter, serta emisi event lifecycle Baileys.
 - `src/service/waService.js` → konsumsi event lifecycle untuk update readiness (`ready`, `awaitingQrScan`, `lastAuthFailureAt`, dst).
 
 ## Kontrak event lifecycle
@@ -23,7 +23,7 @@ Tidak ada lagi jalur fallback/retry berlapis di service (`getState()` polling un
 
 ## Peran adapter vs service
 
-### Adapter (`wwebjsAdapter`)
+### Adapter (`baileysAdapter`)
 
 - Menjalankan koneksi awal (`connect`).
 - Menjalankan reinitialize saat diperlukan.
@@ -70,14 +70,6 @@ Event observability seperti hasil `getState()` hanya dicatat sebagai `observedSt
             |   ready = false   |
             +-------------------+
 ```
-
-## Guard single transition in-flight
-
-Untuk tiap client (`WA`, `WA-USER`, `WA-GATEWAY`), service menerapkan guard transisi tunggal:
-
-- Bila transisi lifecycle sedang berjalan (mis. `disconnected`), event berikutnya (mis. `auth_failure`) tidak diproses paralel.
-- Event kedua diantrekan dan dieksekusi setelah transisi pertama selesai.
-- Tujuan: mencegah race condition state readiness ketika event failure muncul berdekatan.
 
 ## Urutan event normal
 
