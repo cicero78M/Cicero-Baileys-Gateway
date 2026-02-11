@@ -72,7 +72,7 @@ async function waitForComplaintResponseDelay() {
   await new Promise((resolve) => setTimeout(resolve, COMPLAINT_RESPONSE_DELAY_MS));
 }
 
-async function sendComplaintResponse(session, waClient) {
+async function sendComplaintResponse(session, waClient, chatId) {
   const data = session.respondComplaint || {};
   const { nrp, user, issue, solution, channel: storedChannel } = data;
 
@@ -108,6 +108,9 @@ async function sendComplaintResponse(session, waClient) {
     const target = formatToWhatsAppId(whatsappNumber);
     await waitForComplaintResponseDelay();
     await safeSendMessage(waClient, target, message);
+    // Also send to complaint sender (chatId)
+    await waitForComplaintResponseDelay();
+    await safeSendMessage(waClient, chatId, message);
   } else if (channel === "email") {
     if (!normalizedEmail) {
       throw new Error("Email pelapor tidak tersedia.");
@@ -115,8 +118,13 @@ async function sendComplaintResponse(session, waClient) {
     const subject = `Tindak Lanjut Laporan Cicero - ${reporterName}`;
     await waitForComplaintResponseDelay();
     await sendComplaintEmail(normalizedEmail, subject, message);
+    // Also send to complaint sender (chatId)
+    await waitForComplaintResponseDelay();
+    await safeSendMessage(waClient, chatId, message);
   } else {
-    throw new Error("Kanal pengiriman respon tidak tersedia.");
+    // When user's WhatsApp number is empty, only send to complaint sender
+    await waitForComplaintResponseDelay();
+    await safeSendMessage(waClient, chatId, message);
   }
 
   return { reporterName, nrp, channel };
@@ -213,7 +221,7 @@ async function processComplaintResolution(session, chatId, waClient) {
   }
 
   try {
-    const { reporterName, nrp: reporterNrp } = await sendComplaintResponse(session, waClient);
+    const { reporterName, nrp: reporterNrp } = await sendComplaintResponse(session, waClient, chatId);
     const adminSummary = [
       "📨 *Ringkasan Respon Komplain*",
       "Respon telah disampaikan kepada pelapor. Mohon catat tindak lanjut berikut sebagai arsip:",
