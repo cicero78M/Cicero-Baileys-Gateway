@@ -158,3 +158,17 @@ Skenario lulus bila semua poin berikut terpenuhi:
 - Scope operasional WA menjadi lebih sempit, sehingga risiko regresi menu lain berkurang.
 - Beban maintenance fokus pada complaint parser/routing dan bulk deletion parser/eksekusi.
 - Dokumentasi ini menjadi referensi utama untuk evaluasi perubahan berikutnya pada modul WA.
+
+
+---
+
+## 5) Implementasi Parser di `waService.js` (Pembaruan)
+
+Parser command pada `createHandleMessage(...)->processMessage` dan `handleGatewayMessage(...)` sekarang disederhanakan secara eksplisit menjadi 4 tahap tetap:
+
+1. **Normalisasi teks** (`trim()` + `toLowerCase()`).
+2. **Complaint-first handling** melalui `handleComplaintMessageIfApplicable(...)`.
+3. **Deteksi bulk deletion** (header regex atau sesi bulk aktif) lalu `processBulkDeletionRequest(...)`.
+4. **Fallback minimal** dengan balasan singkat: `fitur tidak tersedia`.
+
+Perubahan ini sekaligus menghapus cabang parser non-minimal scope seperti menu `oprrequest`, `userrequest`, `dirrequest`, `dashrequest`, serta command prefiks admin lama (`addnewclient#...`, `fetchinsta#...`) dari jalur parsing pesan utama.
