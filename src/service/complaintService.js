@@ -68,26 +68,30 @@ function buildRecordedActivitySolution({
   return lines.join("\n").trim();
 }
 
-function isZeroMetric(value) {
-  if (value === null || value === undefined) return false;
+export function isLowOrMissingMetric(value) {
+  if (value === null || value === undefined) return true;
+  if (typeof value === "string" && value.trim() === "-") return true;
   const num = Number(value);
-  if (Number.isNaN(num)) return false;
-  return num === 0;
+  if (Number.isNaN(num) || !Number.isFinite(num)) return false;
+  return num < 10;
 }
 
 function buildSuspiciousAccountNote(platform, handle) {
   const decoratedHandle = handle ? `*${handle}*` : "tersebut";
-  if (platform === "instagram") {
-    return [
-      "⚠️ Catatan Instagram",
-      `Akun ${decoratedHandle} terlihat tanpa aktivitas (posting, pengikut, dan mengikuti semuanya 0).`,
-      "Mohon periksa langsung di aplikasi Instagram untuk memastikan username benar dan akun masih aktif.",
-    ].join("\n");
-  }
+  const platformLabel = platform === "instagram" ? "Instagram" : "TikTok";
   return [
-    "⚠️ Catatan TikTok",
-    `Akun ${decoratedHandle} terlihat tanpa aktivitas (video, pengikut, dan mengikuti semuanya 0 dengan jumlah likes tidak tersedia).`,
-    "Mohon cek ulang di aplikasi TikTok guna memastikan username valid atau akun tidak sedang dibatasi.",
+    `⚠️ Catatan ${platformLabel}`,
+    `Akun ${decoratedHandle} terdeteksi minim aktivitas (metrik konten/followers/following${
+      platform === "tiktok" ? "/likes" : ""
+    } berada di bawah ambang valid).`,
+    "",
+    "1. Menggunakan foto profil yang jelas dan sesuai.",
+    "2. Melengkapi profil akun secara wajar.",
+    "3. Memiliki aktivitas normal seperti mengikuti akun lain dan memiliki followers.",
+    "4. Melakukan interaksi secara wajar dan bertahap.",
+    "5. Menunjukkan perilaku penggunaan yang sehat dan konsisten sebagai pengguna aktif.",
+    "",
+    "Hal ini penting agar akun teridentifikasi sebagai akun aktif dan valid oleh sistem platform sosial media, serta untuk menghindari pembatasan, penurunan jangkauan, atau akun dianggap tidak aktif.",
   ].join("\n");
 }
 
@@ -98,16 +102,9 @@ function ensureHandle(value) {
   return trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
 }
 
-function toPositiveNumber(value) {
-  if (value === null || value === undefined) return null;
-  const num = Number(value);
-  if (Number.isNaN(num) || !Number.isFinite(num)) return null;
-  return num > 0 ? num : null;
-}
-
-function hasFullMetrics(status, keys = ["posts", "followers", "following"]) {
+export function hasFullMetrics(status, keys = ["posts", "followers", "following"]) {
   if (!status) return false;
-  return keys.every((key) => toPositiveNumber(status[key]) !== null);
+  return keys.every((key) => !isLowOrMissingMetric(status[key]));
 }
 
 function buildPlatformSummary(platformLabel, status) {
@@ -475,9 +472,9 @@ export async function buildAccountStatus(user) {
       );
 
       if (
-        isZeroMetric(mediaCount) &&
-        isZeroMetric(followerCount) &&
-        isZeroMetric(followingCount)
+        isLowOrMissingMetric(mediaCount) &&
+        isLowOrMissingMetric(followerCount) &&
+        isLowOrMissingMetric(followingCount)
       ) {
         const note = buildSuspiciousAccountNote("instagram", instaHandle);
         result.instagram.reviewNote = note;
@@ -545,12 +542,11 @@ export async function buildAccountStatus(user) {
         `Likes: ${formatNumber(likeCount)}`
       );
 
-      const likesUnavailable = likeCount === null || likeCount === undefined;
       if (
-        isZeroMetric(videoCount) &&
-        isZeroMetric(followerCount) &&
-        isZeroMetric(followingCount) &&
-        (likesUnavailable || isZeroMetric(likeCount))
+        isLowOrMissingMetric(videoCount) &&
+        isLowOrMissingMetric(followerCount) &&
+        isLowOrMissingMetric(followingCount) &&
+        isLowOrMissingMetric(likeCount)
       ) {
         const note = buildSuspiciousAccountNote("tiktok", tiktokHandle);
         result.tiktok.reviewNote = note;
