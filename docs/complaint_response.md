@@ -12,6 +12,13 @@ Modul `respondComplaint` menyampaikan langkah tindak lanjut kepada pelapor saat 
 
 Catatan: Narasi lama yang menyebut "Absensi Amplifikasi" sudah diganti agar selaras dengan terminologi likes/komentar di Instagram dan TikTok.
 
+
+## Validasi akun minim aktivitas
+- Service komplain sekarang memakai ambang metrik minimal **>=10** untuk menilai akun aktif valid pada Instagram/TikTok.
+- Nilai `null`/`undefined`/`-`/angka `0-9` diperlakukan sebagai metrik rendah atau tidak tersedia.
+- Untuk TikTok, field `likes` diproses konsisten: jika bernilai `-` atau tidak tersedia, akun tetap masuk evaluasi minim aktivitas.
+- Saat akun terdeteksi minim aktivitas, respon komplain menyertakan panduan perbaikan profil dan perilaku akun agar validasi platform lebih stabil.
+
 ## Perilaku sesi setelah respon
 - Setelah pesan komplain dibalas dan ringkasan admin dikirim, sesi menu *Client Request* ditutup otomatis.
 - Penutupan sesi mencegah pengiriman ulang pesan menu utama seperti:
