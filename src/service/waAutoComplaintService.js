@@ -39,9 +39,10 @@ function hasComplaintHeader(text) {
     .map((line) => line.trim())
     .filter(Boolean);
   if (!lines.length) return false;
-  const headerIndex = lines.findIndex((line) =>
-    /^pesan\s+komplain/i.test(line)
-  );
+  const headerIndex = lines.findIndex((line) => {
+    const stripped = line.replace(/^\*+|\*+$/g, '');
+    return /^pesan\s+komplain/i.test(stripped);
+  });
   if (headerIndex < 0) {
     return false;
   }

@@ -227,7 +227,7 @@ export function parseComplaintMessage(message) {
       continue;
     }
     const contentLine = stripListPrefix(line);
-    const normalized = contentLine.toLowerCase();
+    const normalized = contentLine.replace(/^\*+|\*+$/g, '').toLowerCase();
     if (/^pesan\s+komplain/.test(normalized)) {
       continue;
     }

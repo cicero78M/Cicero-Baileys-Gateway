@@ -45,4 +45,30 @@ describe('formatComplaintIssue', () => {
     expect(formatted).toContain('• Instagram: @example.user');
     expect(formatted).toContain('• TikTok: @anotheruser');
   });
+
+  it('handles complaint header with WhatsApp bold formatting (*)', () => {
+    const raw = [
+      '*Pesan Komplain*',
+      'NRP : 72120290',
+      'Nama : DARTOK DARMAWAN',
+      'Satker : DITINTELKAM POLDA JATIM',
+      'Username IG : @dartokdarmawan72',
+      'Username Tiktok : @dartok7853',
+      '',
+      'Kendala',
+      '- sudah melaksanakan Instagram belum terdata',
+      '- sudah melaksanakan tiktok belum terdata.',
+    ].join('\n');
+
+    const formatted = formatComplaintIssue(raw);
+
+    expect(formatted).toContain('*Informasi Tambahan Pelapor*');
+    expect(formatted).toContain('• NRP/NIP: 72120290');
+    expect(formatted).toContain('• Nama: Dartok Darmawan');
+    expect(formatted).toContain('• Instagram: @dartokdarmawan72');
+    expect(formatted).toContain('• TikTok: @dartok7853');
+    expect(formatted).toContain('*Rincian Kendala*');
+    expect(formatted).toContain('1. Sudah melaksanakan Instagram belum terdata.');
+    expect(formatted).toContain('2. Sudah melaksanakan tiktok belum terdata.');
+  });
 });
