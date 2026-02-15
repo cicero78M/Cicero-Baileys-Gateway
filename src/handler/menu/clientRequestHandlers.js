@@ -107,15 +107,40 @@ async function sendComplaintResponse(session, waClient, chatId) {
   if (channel === "whatsapp") {
     const target = formatToWhatsAppId(whatsappNumber);
     await waitForComplaintResponseDelay();
-    // Send to both user and complaint sender concurrently
-    const results = await Promise.allSettled([
+
+    const deliveryResults = await Promise.allSettled([
       safeSendMessage(waClient, target, message),
       safeSendMessage(waClient, chatId, message),
     ]);
-    
-    // Check if at least one message was sent successfully
-    if (results.every(r => r.status === 'rejected')) {
-      throw new Error(`Gagal mengirim pesan ke user (${target}) dan admin (${chatId}).`);
+
+    const [personnelResult, requesterResult] = deliveryResults;
+    const personnelSuccess =
+      personnelResult?.status === "fulfilled" && personnelResult.value === true;
+    const requesterSuccess =
+      requesterResult?.status === "fulfilled" && requesterResult.value === true;
+
+    if (!personnelSuccess) {
+      console.warn(
+        `[ComplaintResponse] Gagal kirim ke personel (${target}): ${
+          personnelResult?.status === "rejected"
+            ? personnelResult.reason?.message || personnelResult.reason
+            : "safeSendMessage_returned_false"
+        }`
+      );
+    }
+
+    if (!requesterSuccess) {
+      console.warn(
+        `[ComplaintResponse] Gagal kirim ke requester (${chatId}): ${
+          requesterResult?.status === "rejected"
+            ? requesterResult.reason?.message || requesterResult.reason
+            : "safeSendMessage_returned_false"
+        }`
+      );
+    }
+
+    if (!personnelSuccess && !requesterSuccess) {
+      throw new Error(`Gagal mengirim pesan ke personel (${target}) dan requester (${chatId}).`);
     }
   } else if (channel === "email") {
     if (!normalizedEmail) {
@@ -123,15 +148,37 @@ async function sendComplaintResponse(session, waClient, chatId) {
     }
     const subject = `Tindak Lanjut Laporan Cicero - ${reporterName}`;
     await waitForComplaintResponseDelay();
-    // Send email and WhatsApp message concurrently
-    const results = await Promise.allSettled([
+
+    const deliveryResults = await Promise.allSettled([
       sendComplaintEmail(normalizedEmail, subject, message),
       safeSendMessage(waClient, chatId, message),
     ]);
-    
-    // Check if at least one delivery was successful
-    if (results.every(r => r.status === 'rejected')) {
-      throw new Error(`Gagal mengirim email (${normalizedEmail}) dan pesan ke admin (${chatId}).`);
+
+    const [emailResult, requesterResult] = deliveryResults;
+    const emailSuccess = emailResult?.status === "fulfilled";
+    const requesterSuccess =
+      requesterResult?.status === "fulfilled" && requesterResult.value === true;
+
+    if (!emailSuccess) {
+      console.warn(
+        `[ComplaintResponse] Gagal kirim email (${normalizedEmail}): ${
+          emailResult?.reason?.message || emailResult?.reason || "unknown_error"
+        }`
+      );
+    }
+
+    if (!requesterSuccess) {
+      console.warn(
+        `[ComplaintResponse] Gagal kirim WA requester (${chatId}): ${
+          requesterResult?.status === "rejected"
+            ? requesterResult.reason?.message || requesterResult.reason
+            : "safeSendMessage_returned_false"
+        }`
+      );
+    }
+
+    if (!emailSuccess && !requesterSuccess) {
+      throw new Error(`Gagal mengirim email (${normalizedEmail}) dan pesan ke requester (${chatId}).`);
     }
   } else {
     // When user's WhatsApp number is empty, only send to complaint sender

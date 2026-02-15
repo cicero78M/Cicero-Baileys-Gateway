@@ -107,6 +107,66 @@ export function hasFullMetrics(status, keys = ["posts", "followers", "following"
   return keys.every((key) => !isLowOrMissingMetric(status[key]));
 }
 
+function hasLowOrMissingMetrics(status, keys = ["posts", "followers", "following"]) {
+  if (!status) return true;
+  return keys.some((key) => isLowOrMissingMetric(status[key]));
+}
+
+function evaluateAbsenceTemplateType(accountStatus) {
+  const instagramStatus = accountStatus?.instagram;
+  const tiktokStatus = accountStatus?.tiktok;
+  const hasInstagramHandle = Boolean(instagramStatus?.username);
+  const hasTiktokHandle = Boolean(tiktokStatus?.username);
+
+  const instagramValid = hasInstagramHandle
+    ? hasFullMetrics(instagramStatus, ["posts", "followers", "following"])
+    : true;
+  const tiktokValid = hasTiktokHandle
+    ? hasFullMetrics(tiktokStatus, ["posts", "followers", "following", "likes"])
+    : true;
+
+  const instagramLow = hasInstagramHandle
+    ? hasLowOrMissingMetrics(instagramStatus, ["posts", "followers", "following"])
+    : false;
+  const tiktokLow = hasTiktokHandle
+    ? hasLowOrMissingMetrics(tiktokStatus, ["posts", "followers", "following", "likes"])
+    : false;
+
+  if (instagramLow || tiktokLow) {
+    return "low_activity";
+  }
+
+  if (instagramValid && tiktokValid) {
+    return "active_valid";
+  }
+
+  return null;
+}
+
+export function buildLowActivityResponse() {
+  return [
+    "Ringkasan pengecekan: akun terdeteksi aktif, namun metrik publik (konten/followers/following/likes) masih minim atau belum terbaca sehingga absensi otomatis belum dapat divalidasi.",
+    "",
+    "Tindak lanjut:",
+    "1) Pastikan akun yang dipakai saat tugas adalah akun yang sama dengan data di Cicero.",
+    "2) Optimalkan aktivitas akun secara wajar hingga metrik publik stabil (minimal 10) pada konten/followers/following/likes.",
+    "3) Ulangi like/komentar pada konten resmi, tunggu sinkronisasi ±1 jam, lalu cek kembali menu absensi.",
+    "4) Jika absensi tetap belum muncul, kirim screenshot profil terbaru + bukti aksi untuk eskalasi operator.",
+  ].join("\n");
+}
+
+export function buildActiveValidResponse() {
+  return [
+    "Ringkasan pengecekan: akun terdeteksi aktif dan metrik publik valid (konten/followers/following/likes memenuhi ambang minimal 10).",
+    "",
+    "Tindak lanjut:",
+    "1) Pastikan aksi dilakukan menggunakan akun yang tercatat di Cicero.",
+    "2) Refresh menu *Absensi Likes Instagram* dan/atau *Absensi Komentar TikTok* dengan satker/periode yang sesuai.",
+    "3) Jika data belum masuk setelah sinkronisasi ±1 jam, kirim tautan konten + waktu aksi + screenshot sebagai bahan pengecekan log.",
+    "4) Eskalasi ke operator piket bila hasil refresh tetap tidak berubah.",
+  ].join("\n");
+}
+
 function buildPlatformSummary(platformLabel, status) {
   if (!status) return `${platformLabel}: Data tidak tersedia.`;
   if (status.error) {
@@ -1029,6 +1089,8 @@ export async function buildComplaintSolutionsFromIssues(parsed, user, accountSta
 
   const handledKeys = new Set();
   const solutions = [];
+  const combinedAbsenceTemplateType = evaluateAbsenceTemplateType(accountStatus);
+  let absenceTemplateApplied = false;
 
   for (const issueText of issues) {
     const key = detectKnownIssueKey(issueText);
@@ -1037,12 +1099,27 @@ export async function buildComplaintSolutionsFromIssues(parsed, user, accountSta
     }
     handledKeys.add(key);
 
-    if (key === "instagram_not_recorded") {
-      solutions.push(await buildInstagramIssueSolution(issueText, parsed, user, accountStatus));
-      continue;
-    }
-    if (key === "tiktok_not_recorded") {
-      solutions.push(await buildTiktokIssueSolution(issueText, parsed, user, accountStatus));
+    if (key === "instagram_not_recorded" || key === "tiktok_not_recorded") {
+      if (combinedAbsenceTemplateType === "low_activity") {
+        if (!absenceTemplateApplied) {
+          solutions.push(buildLowActivityResponse());
+          absenceTemplateApplied = true;
+        }
+        continue;
+      }
+      if (combinedAbsenceTemplateType === "active_valid") {
+        if (!absenceTemplateApplied) {
+          solutions.push(buildActiveValidResponse());
+          absenceTemplateApplied = true;
+        }
+        continue;
+      }
+
+      if (key === "instagram_not_recorded") {
+        solutions.push(await buildInstagramIssueSolution(issueText, parsed, user, accountStatus));
+      } else {
+        solutions.push(await buildTiktokIssueSolution(issueText, parsed, user, accountStatus));
+      }
       continue;
     }
     if (key === "attendance_less") {
