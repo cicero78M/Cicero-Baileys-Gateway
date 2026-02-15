@@ -11,8 +11,25 @@ Bullet points (`-`, `•`) and numbered lists (`1)`, `2.`) after these headers a
 
 ## Default template
 
+The complaint header "Pesan Komplain" can be formatted in plain text or with WhatsApp bold formatting (using asterisks):
+
 ```
 Pesan Komplain
+NRP    : 75020201
+Nama   : Nama Pelapor
+Polres : Satuan
+Username IG : @username
+Username TikTok : @username
+
+Kendala
+- Sudah melaksanakan Instagram belum terdata.
+- Sudah melaksanakan TikTok belum terdata.
+```
+
+Or with bold formatting:
+
+```
+*Pesan Komplain*
 NRP    : 75020201
 Nama   : Nama Pelapor
 Polres : Satuan

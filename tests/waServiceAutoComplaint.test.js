@@ -231,4 +231,68 @@ describe('waAutoComplaintService', () => {
     expect(secondHandled).toBe(false);
     expect(respondComplaintMessageMock).toHaveBeenCalledTimes(1);
   });
+
+  test('accepts complaints with starred header *Pesan Komplain*', async () => {
+    const chatId = 'starred-chat';
+    const adminOptionSessions = {};
+    const sessions = new Map();
+    const setSession = (id, data) => {
+      sessions.set(id, { ...data, time: Date.now() });
+    };
+    const getSession = (id) => sessions.get(id);
+
+    const complaintMessage = [
+      '*Pesan Komplain*',
+      'NRP : 72120290',
+      'Nama : DARTOK DARMAWAN',
+      'Satker : DITINTELKAM POLDA JATIM',
+      'Username IG : @dartokdarmawan72',
+      'Username Tiktok : @dartok7853',
+      '',
+      'Kendala',
+      '- sudah melaksanakan Instagram belum terdata',
+      '- sudah melaksanakan tiktok belum terdata.',
+    ].join('\n');
+
+    const handled = await handleComplaintMessageIfApplicable({
+      text: complaintMessage,
+      allowUserMenu: false,
+      session: null,
+      isAdmin: false,
+      initialIsMyContact: false,
+      senderId: '6299999@c.us',
+      chatId,
+      adminOptionSessions,
+      setSession,
+      getSession,
+      waClient: {},
+      pool: {},
+      userModel: {},
+    });
+
+    expect(handled).toBe(true);
+    expect(respondComplaintMessageMock).toHaveBeenCalledTimes(1);
+    expect(getSession(chatId)).toMatchObject({ menu: 'clientrequest' });
+  });
+
+  test('shouldHandleComplaintMessage returns true for starred header', () => {
+    const complaintMessage = [
+      '*Pesan Komplain*',
+      'NRP : 72120290',
+      'Nama : DARTOK DARMAWAN',
+      '',
+      'Kendala',
+      '- sudah melaksanakan Instagram belum terdata',
+    ].join('\n');
+
+    const result = shouldHandleComplaintMessage({
+      text: complaintMessage,
+      allowUserMenu: false,
+      session: null,
+      isAdmin: false,
+      initialIsMyContact: false,
+    });
+
+    expect(result).toBe(true);
+  });
 });
