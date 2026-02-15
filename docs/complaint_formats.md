@@ -84,3 +84,63 @@ For TikTok complaints where the profile appears active but comment metrics are s
 - Prompting reporters to redo one comment on an official satker video with plain text (avoid emojis/special characters) and wait around one hour for synchronization.
 - Recommending a username update through the existing *Update Data Personil* instructions when the complaint handle differs from the database entry.
 - Escalation guidance that asks operators to review TikTok integration logs (RapidAPI/API), including potential rate-limit cases, if data remains empty after the synchronization window.
+
+## Contoh payload/hasil berdasarkan kondisi metrik akun
+
+Contoh berikut fokus pada issue absensi (`instagram_not_recorded`, `tiktok_not_recorded`) yang diproses oleh orchestrator `buildComplaintSolutionsFromIssues()`.
+
+### 1) Kondisi metrik kosong / `<10` → template aktif namun minim aktivitas publik
+
+**Contoh payload komplain (ringkas)**
+```json
+{
+  "nrp": "75020201",
+  "message": "Pesan Komplain\nNRP: 75020201\nNama: Nama Pelapor\nUsername IG: @akuncontoh\nUsername TikTok: @akuncontoh\n\nKendala\n- Sudah melaksanakan Instagram belum terdata.\n- Sudah melaksanakan TikTok belum terdata."
+}
+```
+
+**Contoh status akun ter-evaluasi**
+```json
+{
+  "instagram": { "username": "@akuncontoh", "posts": 2, "followers": 8, "following": "-" },
+  "tiktok": { "username": "@akuncontoh", "posts": 0, "followers": 4, "following": 9, "likes": null }
+}
+```
+
+**Template hasil prioritas (`buildLowActivityResponse`)**
+```text
+Ringkasan pengecekan: akun terdeteksi aktif, namun metrik publik (konten/followers/following/likes) masih minim atau belum terbaca sehingga absensi otomatis belum dapat divalidasi.
+
+Tindak lanjut:
+1) Pastikan akun yang dipakai saat tugas adalah akun yang sama dengan data di Cicero.
+2) Optimalkan aktivitas akun secara wajar hingga metrik publik stabil (minimal 10) pada konten/followers/following/likes.
+3) Ulangi like/komentar pada konten resmi, tunggu sinkronisasi ±1 jam, lalu cek kembali menu absensi.
+4) Jika absensi tetap belum muncul, kirim screenshot profil terbaru + bukti aksi untuk eskalasi operator.
+```
+
+### 2) Kondisi metrik valid (`>=10`) → template aktif dan valid
+
+**Contoh status akun ter-evaluasi**
+```json
+{
+  "instagram": { "username": "@akunvalid", "posts": 25, "followers": 120, "following": 80 },
+  "tiktok": { "username": "@akunvalid", "posts": 19, "followers": 210, "following": 76, "likes": 350 }
+}
+```
+
+**Template hasil prioritas (`buildActiveValidResponse`)**
+```text
+Ringkasan pengecekan: akun terdeteksi aktif dan metrik publik valid (konten/followers/following/likes memenuhi ambang minimal 10).
+
+Tindak lanjut:
+1) Pastikan aksi dilakukan menggunakan akun yang tercatat di Cicero.
+2) Refresh menu *Absensi Likes Instagram* dan/atau *Absensi Komentar TikTok* dengan satker/periode yang sesuai.
+3) Jika data belum masuk setelah sinkronisasi ±1 jam, kirim tautan konten + waktu aksi + screenshot sebagai bahan pengecekan log.
+4) Eskalasi ke operator piket bila hasil refresh tetap tidak berubah.
+```
+
+Identifier fungsi terkait:
+- `evaluateAbsenceTemplateType(accountStatus)`
+- `buildLowActivityResponse()`
+- `buildActiveValidResponse()`
+- `buildComplaintSolutionsFromIssues(parsed, user, accountStatus)`

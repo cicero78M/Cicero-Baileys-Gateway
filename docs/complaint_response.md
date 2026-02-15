@@ -127,3 +127,21 @@ Nilai status yang mungkin:
 - `failed`: pengiriman gagal (contoh: client WA belum siap atau error saat kirim).
 - `invalid`: nomor WA tidak valid.
 - `skipped`: nomor WA kosong/tidak tersedia.
+
+## Matriks kondisi status akun → template respon final
+
+Template final untuk issue absensi (`instagram_not_recorded`, `tiktok_not_recorded`) sekarang diprioritaskan di `buildComplaintSolutionsFromIssues` dengan evaluator gabungan `evaluateAbsenceTemplateType`.
+
+| Kondisi gabungan `accountStatus` (Instagram + TikTok) | Template prioritas | Identifier fungsi |
+| --- | --- | --- |
+| Salah satu metrik publik kosong / `-` / `<10` pada akun yang terdaftar | **aktif namun minim aktivitas publik** | `buildLowActivityResponse()` |
+| Seluruh metrik publik valid (`>=10`) sesuai ambang kebijakan untuk akun yang terdaftar | **aktif dan valid** | `buildActiveValidResponse()` |
+| Kondisi lain (mis. data belum lengkap, error API, username mismatch) | fallback detail platform per issue | `buildInstagramIssueSolution()` / `buildTiktokIssueSolution()` |
+
+Definisi metrik publik:
+- Instagram: `posts`, `followers`, `following`
+- TikTok: `posts`, `followers`, `following`, `likes`
+
+Catatan implementasi:
+- Template prioritas hanya berlaku untuk issue key absensi.
+- Jika dalam satu komplain terdapat dua issue absensi sekaligus (Instagram+TikTok), template prioritas dikirim satu kali agar tidak duplikat.
