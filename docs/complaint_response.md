@@ -33,14 +33,6 @@ Catatan: Narasi lama yang menyebut "Absensi Amplifikasi" sudah diganti agar sela
   ```
 - Admin dapat membuka kembali menu dengan perintah `clientrequest` bila diperlukan.
 
-
-## Prioritas kanal pengiriman respon
-- Urutan kanal untuk `sendComplaintResponse` sekarang: **WhatsApp → Email → Telegram**.
-- Sistem memilih WhatsApp bila `user.whatsapp` tersedia.
-- Jika WhatsApp kosong namun `user.email` tersedia, sistem memakai email.
-- Jika WhatsApp dan email kosong namun identitas Telegram user tersedia (contoh field `telegram_chat_id`), sistem memakai Telegram.
-- Jika ketiga kanal tidak tersedia atau nilai kanal tidak valid, proses akan mengembalikan error eksplisit `Kanal pengiriman tidak tersedia/invalid.` agar tidak ada fallback tersembunyi.
-
 ## API respon komplain
 Endpoint komplain dipakai untuk menyusun pesan respon yang akan ditampilkan kembali di frontend sebelum dikirimkan melalui kanal lain.
 

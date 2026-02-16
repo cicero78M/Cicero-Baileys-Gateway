@@ -72,57 +72,6 @@ async function waitForComplaintResponseDelay() {
   await new Promise((resolve) => setTimeout(resolve, COMPLAINT_RESPONSE_DELAY_MS));
 }
 
-function resolveTelegramChatId(user = {}) {
-  const candidateFields = [
-    user.telegram_chat_id,
-    user.telegramChatId,
-    user.telegram_id,
-    user.telegramId,
-    user.telegram,
-  ];
-
-  for (const candidate of candidateFields) {
-    if (candidate === null || candidate === undefined) continue;
-    const normalized = String(candidate).trim();
-    if (normalized) return normalized;
-  }
-
-  return "";
-}
-
-async function sendTelegramComplaintMessage(telegramChatId, message) {
-  const telegramBotToken = String(process.env.TELEGRAM_BOT_TOKEN || "").trim();
-  if (!telegramBotToken) {
-    throw new Error("TELEGRAM_BOT_TOKEN belum dikonfigurasi.");
-  }
-
-  const response = await fetch(
-    `https://api.telegram.org/bot${telegramBotToken}/sendMessage`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: telegramChatId,
-        text: message,
-      }),
-    }
-  );
-
-  if (!response.ok) {
-    const responseText = await response.text();
-    throw new Error(
-      `Telegram API HTTP ${response.status}: ${responseText || "unknown_error"}`
-    );
-  }
-
-  const payload = await response.json();
-  if (!payload?.ok) {
-    throw new Error(payload?.description || "Telegram API rejected request.");
-  }
-
-  return true;
-}
-
 async function sendComplaintResponse(session, waClient, chatId) {
   const data = session.respondComplaint || {};
   const { nrp, user, issue, solution, channel: storedChannel } = data;
@@ -147,15 +96,12 @@ async function sendComplaintResponse(session, waClient, chatId) {
 
   const whatsappNumber = user?.whatsapp ? String(user.whatsapp).trim() : "";
   const normalizedEmail = normalizeEmail(user?.email);
-  const telegramChatId = resolveTelegramChatId(user);
   const channel =
     storedChannel ||
     (whatsappNumber
       ? "whatsapp"
       : normalizedEmail
       ? "email"
-      : telegramChatId
-      ? "telegram"
       : "");
 
   if (channel === "whatsapp") {
@@ -234,48 +180,10 @@ async function sendComplaintResponse(session, waClient, chatId) {
     if (!emailSuccess && !requesterSuccess) {
       throw new Error(`Gagal mengirim email (${normalizedEmail}) dan pesan ke requester (${chatId}).`);
     }
-  } else if (channel === "telegram") {
-    if (!telegramChatId) {
-      throw new Error("Identitas Telegram pelapor tidak tersedia.");
-    }
-
-    await waitForComplaintResponseDelay();
-
-    const deliveryResults = await Promise.allSettled([
-      sendTelegramComplaintMessage(telegramChatId, message),
-      safeSendMessage(waClient, chatId, message),
-    ]);
-
-    const [telegramResult, requesterResult] = deliveryResults;
-    const telegramSuccess = telegramResult?.status === "fulfilled";
-    const requesterSuccess =
-      requesterResult?.status === "fulfilled" && requesterResult.value === true;
-
-    if (!telegramSuccess) {
-      console.warn(
-        `[ComplaintResponse] Gagal kirim Telegram (${telegramChatId}): ${
-          telegramResult?.reason?.message || telegramResult?.reason || "unknown_error"
-        }`
-      );
-    }
-
-    if (!requesterSuccess) {
-      console.warn(
-        `[ComplaintResponse] Gagal kirim WA requester (${chatId}): ${
-          requesterResult?.status === "rejected"
-            ? requesterResult.reason?.message || requesterResult.reason
-            : "safeSendMessage_returned_false"
-        }`
-      );
-    }
-
-    if (!telegramSuccess && !requesterSuccess) {
-      throw new Error(
-        `Gagal mengirim Telegram (${telegramChatId}) dan pesan ke requester (${chatId}).`
-      );
-    }
   } else {
-    throw new Error("Kanal pengiriman tidak tersedia/invalid.");
+    // When user's WhatsApp number is empty, only send to complaint sender
+    await waitForComplaintResponseDelay();
+    await safeSendMessage(waClient, chatId, message);
   }
 
   return { reporterName, nrp, channel };
@@ -3686,23 +3594,17 @@ Ketik *angka* menu, atau *batal* untuk kembali.
 
     const whatsappNumber = user?.whatsapp ? String(user.whatsapp).trim() : "";
     const normalizedEmail = normalizeEmail(user?.email);
-    const telegramChatId = resolveTelegramChatId(user);
     const hasWhatsapp = Boolean(whatsappNumber);
     const hasEmail = Boolean(normalizedEmail);
-    const hasTelegram = Boolean(telegramChatId);
 
-    if (!hasWhatsapp && !hasEmail && !hasTelegram) {
+    if (!hasWhatsapp && !hasEmail) {
       await waClient.sendMessage(
         chatId,
-        `User *${nrp}* (${formatNama(user) || user.nama || "-"}) belum memiliki kanal kontak (WhatsApp, email, Telegram) terdaftar. Masukkan NRP lain atau ketik *batal* untuk keluar.`
+        `User *${nrp}* (${formatNama(user) || user.nama || "-"}) belum memiliki nomor WhatsApp terdaftar. Masukkan NRP lain atau ketik *batal* untuk keluar.`
       );
       return;
     }
-    const contactChannel = hasWhatsapp
-      ? "whatsapp"
-      : hasEmail
-      ? "email"
-      : "telegram";
+    const contactChannel = hasWhatsapp ? "whatsapp" : "email";
     session.respondComplaint = {
       ...(session.respondComplaint || {}),
       nrp,
