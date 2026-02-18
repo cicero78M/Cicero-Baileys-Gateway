@@ -35,30 +35,60 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, safeMs));
 }
 
-export function isGatewayComplaintForward({ senderId, text, gatewayIds, allowImplicitGatewayForward = false }) {
+export function isGatewayComplaintForward({
+  senderId,
+  chatId,
+  text,
+  gatewayIds,
+  allowImplicitGatewayForward = false,
+}) {
   const normalizedSender = normalizeWhatsAppId(senderId);
-  const knownGatewayIds = new Set([...parseRecipientList(process.env.GATEWAY_WHATSAPP_ADMIN || ''), ...(gatewayIds || [])]);
+  const normalizedChatId = normalizeWhatsAppId(chatId);
+  const knownGatewayIds = new Set([
+    ...parseRecipientList(process.env.GATEWAY_WHATSAPP_ADMIN || ''),
+    ...(gatewayIds || []).map((value) => normalizeWhatsAppId(value)),
+  ]);
+  const isKnownGatewaySender = normalizedSender && knownGatewayIds.has(normalizedSender);
+  const hasGatewayForwardHeader = isGatewayForwardText(text);
+  const isGroupContext = (normalizedChatId || normalizedSender || '').endsWith('@g.us');
 
-  if (normalizedSender && knownGatewayIds.has(normalizedSender)) {
+  if (isKnownGatewaySender && isGroupContext) {
+    return true;
+  }
+
+  if (hasGatewayForwardHeader && (isGroupContext || isKnownGatewaySender)) {
     return true;
   }
 
   if (allowImplicitGatewayForward) {
-    const isGroupMessage = (normalizedSender || '').endsWith('@g.us');
-    if (!isGroupMessage) {
+    if (!isGroupContext) {
       return true;
     }
   }
 
-  return isGatewayForwardText(text);
+  return false;
 }
 
-export function shouldHandleComplaintMessage({ text, allowUserMenu, session, senderId, gatewayIds }) {
+function isCompleteComplaint(parsedComplaint) {
+  return Boolean(parsedComplaint?.isComplaint && parsedComplaint?.reporter?.nrp);
+}
+
+export function shouldHandleComplaintMessage({ text, allowUserMenu, session, senderId, gatewayIds, chatId }) {
   if (allowUserMenu) return false;
   if (session?.menu === 'clientrequest') return false;
-  if (isGatewayComplaintForward({ senderId, text, gatewayIds })) return false;
+
   const parsed = parseComplaintMessage(text);
-  return parsed.isComplaint && Boolean(parsed.reporter.nrp);
+  const isComplaint = isCompleteComplaint(parsed);
+
+  if (!isComplaint && isGatewayComplaintForward({ senderId, chatId, text, gatewayIds })) {
+    return false;
+  }
+
+  if (isComplaint) {
+    return !isGatewayComplaintForward({ senderId, chatId, text, gatewayIds });
+  }
+
+  return false;
 }
 
 async function sendComplaintMessages(waClient, { chatId, senderId, triage }) {
@@ -136,7 +166,7 @@ export async function handleComplaintMessageIfApplicable({
   pool,
   userModel,
 }) {
-  if (!shouldHandleComplaintMessage({ text, allowUserMenu, session, senderId, gatewayIds })) {
+  if (!shouldHandleComplaintMessage({ text, allowUserMenu, session, senderId, gatewayIds, chatId })) {
     return false;
   }
 
