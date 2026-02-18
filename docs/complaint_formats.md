@@ -189,3 +189,43 @@ Aturan diagnosis saat data window terbaru kosong:
 - Jika window terbaru kosong dan riwayat historis juga kosong, diagnosis tetap `NOT_EXECUTED`.
 
 Pemeriksaan username (`USERNAME_MISMATCH`) dan pemeriksaan profil eksternal (RapidAPI) tetap dijalankan supaya respons operator tetap relevan dengan kondisi akun user.
+
+
+### Struktur pesan baru untuk operator & admin
+
+`buildOperatorResponse(triageResult, parsed)` sekarang menyisipkan blok ringkas sebelum `nextActions` agar mudah dibaca di WhatsApp:
+
+1. **Hasil verifikasi username**
+   - Username dilaporkan user (`parsed.reporter.igUsername` / `parsed.reporter.tiktokUsername`).
+   - Username terdaftar di CICERO (`triageResult.evidence.internal.usernameDb.instagram` / `triageResult.evidence.internal.usernameDb.tiktok`).
+   - Status komparasi per platform (`cocok` atau `tidak cocok`).
+2. **Ringkasan audit utama**
+   - Window sinkronisasi: `auditWindowStart` sampai `auditWindowEnd`.
+   - Counter window terbaru: `auditLikeCount` dan `auditCommentCount`.
+   - Counter historis: `historicalAuditLikeCount` dan `historicalAuditCommentCount`.
+3. **Fallback saat evidence belum ada**
+   - Jika `triageResult.evidence.internal` atau field audit/username tidak tersedia, pesan akan menampilkan `data audit belum tersedia`.
+
+Contoh format ringkas operator:
+
+```text
+Ringkasan pengecekan: username mismatch.
+• Hasil verifikasi:
+  - IG laporan: @userA | IG CICERO: @userB | Status: tidak cocok
+  - TikTok laporan: @userA | TikTok CICERO: @userA | Status: cocok
+• Ringkasan audit:
+  - Window sinkronisasi: 2026-02-01T09:30:00.000Z s/d 2026-02-01T10:00:00.000Z
+  - Window terbaru: like 0 | komentar 0
+  - Historis: like 12 | komentar 7
+• Next actions:
+  1) Samakan username di CICERO dengan username yang dipakai saat aksi.
+  2) Kirim screenshot profil terbaru, lalu ulangi aksi like/komentar.
+```
+
+`buildAdminSummary(triageResult, parsed)` ikut disinkronkan untuk validasi operator, dengan menambahkan:
+
+- Username CICERO per platform + status match (`IG Match` / `TikTok Match`).
+- Window sinkronisasi audit (`Window Sync`).
+- Angka audit utama (`Audit Window (L/C)` dan `Audit Historis (L/C)`).
+
+Dengan format ini, admin bisa cepat cross-check mismatch username dan jejak audit tanpa membuka log tambahan.
