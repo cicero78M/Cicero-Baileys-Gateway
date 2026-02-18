@@ -17,16 +17,18 @@ function makeParsed(overrides = {}) {
   };
 }
 
-function makeDb(userRow, auditLike = 0, auditComment = 0) {
-  const query = jest.fn(async (sql) => {
+function makeDb(userRow, auditLike = 0, auditComment = 0, historicalLike = auditLike, historicalComment = auditComment) {
+  const query = jest.fn(async (sql, params = []) => {
     if (sql.includes('FROM "user"')) {
       return { rows: userRow ? [userRow] : [] };
     }
     if (sql.includes('FROM insta_like')) {
-      return { rows: [{ total: auditLike }] };
+      const total = params.length === 1 ? historicalLike : auditLike;
+      return { rows: [{ total }] };
     }
     if (sql.includes('FROM tiktok_comment')) {
-      return { rows: [{ total: auditComment }] };
+      const total = params.length === 1 ? historicalComment : auditComment;
+      return { rows: [{ total }] };
     }
     return { rows: [] };
   });
@@ -78,6 +80,42 @@ describe('complaintTriageService', () => {
     });
 
     expect(result.diagnosisCode).toBe('LOW_TRUST');
+  });
+
+
+
+  test('returns SYNC_PENDING when recent audit is empty but historical audit exists', async () => {
+    const parsed = makeParsed();
+    const db = makeDb(
+      { user_id: '75020201', insta: '@tester', tiktok: '@tester', updated_at: new Date().toISOString() },
+      0,
+      0,
+      5,
+      3
+    );
+
+    const result = await triageComplaint(parsed, {
+      db,
+      now: new Date('2026-02-01T10:00:00Z'),
+      rapidApi: jest.fn(async () => ({ exists: true, isPrivate: false, posts: 20, hasProfilePic: true, recentActivityScore: 80 })),
+    });
+
+    expect(result.diagnosisCode).toBe('SYNC_PENDING');
+    expect(result.nextActions[0].toLowerCase()).toContain('riwayat audit');
+  });
+
+  test('returns NOT_EXECUTED when both recent and historical audit are empty', async () => {
+    const parsed = makeParsed();
+    const db = makeDb({ user_id: '75020201', insta: '@tester', tiktok: '@tester', updated_at: new Date().toISOString() }, 0, 0, 0, 0);
+
+    const result = await triageComplaint(parsed, {
+      db,
+      now: new Date('2026-02-01T10:00:00Z'),
+      rapidApi: jest.fn(async () => ({ exists: true, isPrivate: false })),
+    });
+
+    expect(result.diagnosisCode).toBe('NOT_EXECUTED');
+    expect(result.nextActions[0].toLowerCase()).toContain('data historis');
   });
 
   test('handles RAPIDAPI_UNAVAILABLE with fallback guidance', async () => {

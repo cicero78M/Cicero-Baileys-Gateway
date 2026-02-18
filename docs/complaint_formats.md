@@ -162,6 +162,8 @@ Complaint triage now emits a structured JSON payload that can be reused by Whats
       "lastUsernameUpdateAt": "2026-02-01T10:00:00.000Z",
       "auditLikeCount": 0,
       "auditCommentCount": 0,
+      "historicalAuditLikeCount": 12,
+      "historicalAuditCommentCount": 7,
       "auditWindowStart": "2026-02-01T09:30:00.000Z",
       "auditWindowEnd": "2026-02-01T10:00:00.000Z"
     },
@@ -172,3 +174,18 @@ Complaint triage now emits a structured JSON payload that can be reused by Whats
 ```
 
 The WA auto complaint flow uses this result to send a concise operator response and an admin summary with the same diagnosis context.
+
+
+### Mekanisme evaluasi audit terbaru vs historis
+
+Agar diagnosis `NOT_EXECUTED` tidak terlalu dini, triage sekarang mengecek dua lapis audit:
+
+1. **Window sinkronisasi terbaru (±30 menit)** melalui `auditLikeCount` dan `auditCommentCount`.
+2. **Riwayat audit keseluruhan data** melalui `historicalAuditLikeCount` dan `historicalAuditCommentCount`.
+
+Aturan diagnosis saat data window terbaru kosong:
+
+- Jika window terbaru kosong **tetapi** riwayat historis ada (`historical* > 0`), diagnosis diarahkan ke `SYNC_PENDING` dengan arahan sinkronisasi + validasi manual.
+- Jika window terbaru kosong dan riwayat historis juga kosong, diagnosis tetap `NOT_EXECUTED`.
+
+Pemeriksaan username (`USERNAME_MISMATCH`) dan pemeriksaan profil eksternal (RapidAPI) tetap dijalankan supaya respons operator tetap relevan dengan kondisi akun user.
