@@ -50,8 +50,10 @@ Kendala
 - Complaint replies are throttled with a fixed 3-second pause between each outbound message (including the reporter follow-up and
   admin summary). The delay can be tuned via `COMPLAINT_RESPONSE_DELAY_MS` but defaults to `3000` ms to keep operator and reporter
   responses in sync.
+- Complaint messages received in a group are replied in that same group; a concise summary is also sent to the operator who forwarded/requested the complaint. For private chats, the response is sent only to that requester chat.
 - Field labels such as `NRP`, `NRP/NIP`, `Nama`, `Polres`, `Username IG`, `Instagram`, and `Username TikTok` are still parsed even
   if they appear after the `Kendala` header; these recognized fields are excluded from the issues list.
+- Backward compatibility is preserved: previous *Pesan Komplain* format and legacy responder flow remain accepted without changing reporter message format.
 
 ## Example with "Rincian Kendala"
 
@@ -144,3 +146,29 @@ Identifier fungsi terkait:
 - `buildLowActivityResponse()`
 - `buildActiveValidResponse()`
 - `buildComplaintSolutionsFromIssues(parsed, user, accountStatus)`
+
+## Complaint triage JSON output
+
+Complaint triage now emits a structured JSON payload that can be reused by WhatsApp handlers and admin summaries:
+
+```json
+{
+  "status": "OK | NEED_MORE_DATA | ERROR",
+  "diagnosisCode": "USERNAME_MISMATCH | ACCOUNT_PRIVATE | EXECUTED_BEFORE_REGISTERED | NOT_EXECUTED | COMMENT_SPAM | LOW_TRUST | SYNC_PENDING | UNKNOWN",
+  "confidence": 0.0,
+  "evidence": {
+    "internal": {
+      "usernameDb": { "instagram": "@dbuser", "tiktok": "@dbuser" },
+      "lastUsernameUpdateAt": "2026-02-01T10:00:00.000Z",
+      "auditLikeCount": 0,
+      "auditCommentCount": 0,
+      "auditWindowStart": "2026-02-01T09:30:00.000Z",
+      "auditWindowEnd": "2026-02-01T10:00:00.000Z"
+    },
+    "rapidapi": {}
+  },
+  "nextActions": ["..."]
+}
+```
+
+The WA auto complaint flow uses this result to send a concise operator response and an admin summary with the same diagnosis context.

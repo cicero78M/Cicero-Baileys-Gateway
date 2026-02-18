@@ -1380,7 +1380,7 @@ export function createHandleMessage(waClient, options = {}) {
       const session = getSession(chatId);
 
       const handledComplaint = await handleComplaintMessageIfApplicable({
-        text: normalizedText,
+        text,
         allowUserMenu: false,
         session,
         isAdmin,
@@ -1585,7 +1585,7 @@ export async function handleGatewayMessage(msg) {
   const session = getSession(chatId);
 
   const handledComplaint = await handleComplaintMessageIfApplicable({
-    text: normalizedText,
+    text,
     allowUserMenu: false,
     session,
     isAdmin,
