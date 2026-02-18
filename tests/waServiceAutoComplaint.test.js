@@ -358,6 +358,64 @@ describe('waAutoComplaintService', () => {
   });
 
 
+
+  test('handles valid private complaint from known gateway admin number', () => {
+    process.env.GATEWAY_WHATSAPP_ADMIN = '6200002';
+
+    const complaintMessage = [
+      'Pesan Komplain',
+      'NRP : 123456',
+      '',
+      'Kendala',
+      '- Data engagement belum masuk.',
+    ].join('\n');
+
+    const result = shouldHandleComplaintMessage({
+      text: complaintMessage,
+      allowUserMenu: false,
+      session: null,
+      senderId: '6200002@c.us',
+      chatId: '6200002@c.us',
+    });
+
+    expect(result).toBe(true);
+  });
+
+  test('skips group relay from gateway with wagateway header', () => {
+    process.env.GATEWAY_WHATSAPP_ADMIN = '6200002';
+
+    const complaintMessage = [
+      'wagateway forward',
+      'Pesan Komplain',
+      'NRP : 123456',
+      '',
+      'Kendala',
+      '- Data engagement belum masuk.',
+    ].join('\n');
+
+    const result = shouldHandleComplaintMessage({
+      text: complaintMessage,
+      allowUserMenu: false,
+      session: null,
+      senderId: '6200002@c.us',
+      chatId: '120001@g.us',
+    });
+
+    expect(result).toBe(false);
+  });
+
+  test('ignores private non-complaint message from non-gateway sender', () => {
+    const result = shouldHandleComplaintMessage({
+      text: 'Halo, cek status dong',
+      allowUserMenu: false,
+      session: null,
+      senderId: '6281111@c.us',
+      chatId: '6281111@c.us',
+    });
+
+    expect(result).toBe(false);
+  });
+
   test('shouldHandleComplaintMessage returns true for starred header', () => {
     const complaintMessage = [
       '*Pesan Komplain*',
