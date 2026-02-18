@@ -41,7 +41,7 @@ async function getUserByNrp(db, nrp) {
   return result.rows?.[0] || null;
 }
 
-async function getAuditCounts(db, platform, username, windowStart, windowEnd) {
+async function getAuditCounts(db, platform, username, { windowStart, windowEnd, includeAllTime = false } = {}) {
   const normalized = normalizeHandle(username);
   if (!normalized) return 0;
 
@@ -54,7 +54,11 @@ async function getAuditCounts(db, platform, username, windowStart, windowEnd) {
         SELECT lower(replace(trim(COALESCE(elem->>'username', trim(both '"' FROM elem::text))), '@', '')) AS username
         FROM jsonb_array_elements(COALESCE(l.likes, '[]'::jsonb)) AS elem
       ) AS liked ON liked.username = $1
-      WHERE p.created_at BETWEEN $2::timestamptz AND $3::timestamptz
+      ${
+        includeAllTime
+          ? ''
+          : 'WHERE p.created_at BETWEEN $2::timestamptz AND $3::timestamptz'
+      }
     `,
     tiktok: `
       SELECT COUNT(DISTINCT c.video_id) AS total
@@ -64,14 +68,21 @@ async function getAuditCounts(db, platform, username, windowStart, windowEnd) {
         SELECT lower(replace(trim(raw_username), '@', '')) AS username
         FROM jsonb_array_elements_text(COALESCE(c.comments, '[]'::jsonb)) AS raw(raw_username)
       ) AS commenter ON commenter.username = $1
-      WHERE p.created_at BETWEEN $2::timestamptz AND $3::timestamptz
+      ${
+        includeAllTime
+          ? ''
+          : 'WHERE p.created_at BETWEEN $2::timestamptz AND $3::timestamptz'
+      }
     `,
   };
 
   const sql = queryMap[platform];
   if (!sql) return 0;
 
-  const result = await db.query(sql, [normalized, windowStart.toISOString(), windowEnd.toISOString()]);
+  const params = includeAllTime
+    ? [normalized]
+    : [normalized, windowStart.toISOString(), windowEnd.toISOString()];
+  const result = await db.query(sql, params);
   const total = Number(result.rows?.[0]?.total || 0);
   return Number.isFinite(total) ? total : 0;
 }
@@ -116,12 +127,21 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi }
 
   let auditLikeCount = 0;
   let auditCommentCount = 0;
+  let historicalAuditLikeCount = 0;
+  let historicalAuditCommentCount = 0;
   try {
     auditLikeCount = reporter.igUsername
-      ? await getAuditCounts(db, 'instagram', reporter.igUsername, windowStart, windowEnd)
+      ? await getAuditCounts(db, 'instagram', reporter.igUsername, { windowStart, windowEnd })
       : 0;
     auditCommentCount = reporter.tiktokUsername
-      ? await getAuditCounts(db, 'tiktok', reporter.tiktokUsername, windowStart, windowEnd)
+      ? await getAuditCounts(db, 'tiktok', reporter.tiktokUsername, { windowStart, windowEnd })
+      : 0;
+
+    historicalAuditLikeCount = reporter.igUsername
+      ? await getAuditCounts(db, 'instagram', reporter.igUsername, { includeAllTime: true })
+      : 0;
+    historicalAuditCommentCount = reporter.tiktokUsername
+      ? await getAuditCounts(db, 'tiktok', reporter.tiktokUsername, { includeAllTime: true })
       : 0;
   } catch (err) {
     result.evidence.internal.auditTableStatus = 'audit table not found';
@@ -129,6 +149,11 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi }
 
   result.evidence.internal.auditLikeCount = auditLikeCount;
   result.evidence.internal.auditCommentCount = auditCommentCount;
+  result.evidence.internal.historicalAuditLikeCount = historicalAuditLikeCount;
+  result.evidence.internal.historicalAuditCommentCount = historicalAuditCommentCount;
+
+  const noRecentAuditData = auditLikeCount === 0 && auditCommentCount === 0;
+  const hasHistoricalAuditData = historicalAuditLikeCount > 0 || historicalAuditCommentCount > 0;
 
   const mismatchIg = reporter.igUsername && normalizeHandle(reporter.igUsername) !== normalizeHandle(usernameDb.instagram);
   const mismatchTiktok = reporter.tiktokUsername && normalizeHandle(reporter.tiktokUsername) !== normalizeHandle(usernameDb.tiktok);
@@ -136,7 +161,8 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi }
 
   const shouldCallRapid =
     hasMismatch ||
-    (auditLikeCount === 0 && auditCommentCount === 0) ||
+    noRecentAuditData ||
+    hasHistoricalAuditData ||
     hasCommentIssue(parsed?.issues || []);
 
   const rapidEvidence = {};
@@ -200,11 +226,21 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi }
       result.diagnosisCode = 'EXECUTED_BEFORE_REGISTERED';
       result.confidence = 0.88;
       result.nextActions = ['Daftarkan/update akun di CICERO lalu ulangi aktivitas pada konten target.'];
-    } else if (auditLikeCount === 0 && auditCommentCount === 0) {
+    } else if (noRecentAuditData && hasHistoricalAuditData) {
+      result.status = 'NEED_MORE_DATA';
+      result.diagnosisCode = 'SYNC_PENDING';
+      result.confidence = 0.72;
+      result.nextActions = [
+        'Riwayat audit akun sudah ada, namun aksi terbaru belum terbaca di window sinkronisasi saat ini.',
+        'Pastikan aksi dilakukan pada konten target resmi, lalu cek ulang setelah 30-60 menit.',
+        'Jika tetap kosong, kirim screenshot profil + bukti aksi terbaru agar operator dapat validasi manual.',
+      ];
+    } else if (noRecentAuditData) {
       result.status = 'NEED_MORE_DATA';
       result.diagnosisCode = 'NOT_EXECUTED';
       result.confidence = 0.75;
       result.nextActions = [
+        'Belum ditemukan jejak audit akun pada data historis maupun window sinkronisasi terbaru.',
         'Pastikan aksi dilakukan pada konten target resmi.',
         'Ulangi aksi dan cek ulang setelah window sinkronisasi.',
       ];
