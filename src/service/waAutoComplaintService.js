@@ -1,6 +1,7 @@
 import { clientRequestHandlers } from '../handler/menu/clientRequestHandlers.js';
-import { parseComplaintMessage } from './complaintService.js';
-import { normalizeUserId } from '../utils/utilsHelper.js';
+import { parseComplaintMessage } from './complaintParser.js';
+import { triageComplaint } from './complaintTriageService.js';
+import { fetchSocialProfile } from './rapidApiProfileService.js';
 
 function normalizeWhatsAppId(value) {
   if (!value) return '';
@@ -14,18 +15,13 @@ function normalizeWhatsAppId(value) {
   return `${numeric}@c.us`;
 }
 
-function getGatewayWhatsAppIds(extraIds = []) {
-  const envGatewayIds = (process.env.GATEWAY_WHATSAPP_ADMIN || '')
+function parseRecipientList(csvValue = '') {
+  return String(csvValue || '')
     .split(',')
-    .map((id) => normalizeWhatsAppId(id))
+    .map((value) => normalizeWhatsAppId(value))
     .filter(Boolean);
-
-  const providedIds = (extraIds || [])
-    .map((id) => normalizeWhatsAppId(id))
-    .filter(Boolean);
-
-  return new Set([...envGatewayIds, ...providedIds]);
 }
+
 
 function isGatewayForwardText(text) {
   if (!text) return false;
@@ -33,40 +29,15 @@ function isGatewayForwardText(text) {
   return /^(wagateway|wabot)\b/.test(normalized);
 }
 
-function hasComplaintHeader(text) {
-  const lines = String(text || '')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (!lines.length) return false;
-  const headerIndex = lines.findIndex((line) => {
-    const stripped = line.replace(/^\*+|\*+$/g, '');
-    return /^pesan\s+komplain/i.test(stripped);
-  });
-  if (headerIndex < 0) {
-    return false;
-  }
-  const hasKendalaSection = lines
-    .slice(headerIndex + 1)
-    .some((line) =>
-      /^kendala\b/.test(line.toLowerCase().replace(/[:：]/g, ''))
-    );
-  if (!hasKendalaSection) {
-    return false;
-  }
-  const parsed = parseComplaintMessage(text);
-  const nrp = normalizeUserId(parsed?.nrp || '');
-  return Boolean(nrp);
+function delay(ms) {
+  const normalizedMs = Number(ms);
+  const safeMs = Number.isFinite(normalizedMs) && normalizedMs >= 0 ? normalizedMs : 3000;
+  return new Promise((resolve) => setTimeout(resolve, safeMs));
 }
 
-export function isGatewayComplaintForward({
-  senderId,
-  text,
-  gatewayIds,
-  allowImplicitGatewayForward = false,
-}) {
+export function isGatewayComplaintForward({ senderId, text, gatewayIds, allowImplicitGatewayForward = false }) {
   const normalizedSender = normalizeWhatsAppId(senderId);
-  const knownGatewayIds = getGatewayWhatsAppIds(gatewayIds);
+  const knownGatewayIds = new Set([...parseRecipientList(process.env.GATEWAY_WHATSAPP_ADMIN || ''), ...(gatewayIds || [])]);
 
   if (normalizedSender && knownGatewayIds.has(normalizedSender)) {
     return true;
@@ -82,25 +53,79 @@ export function isGatewayComplaintForward({
   return isGatewayForwardText(text);
 }
 
-export function shouldHandleComplaintMessage({
-  text,
-  allowUserMenu,
-  session,
-  senderId,
-  gatewayIds,
-}) {
+export function shouldHandleComplaintMessage({ text, allowUserMenu, session, senderId, gatewayIds }) {
   if (allowUserMenu) return false;
   if (session?.menu === 'clientrequest') return false;
   if (isGatewayComplaintForward({ senderId, text, gatewayIds })) return false;
-  return hasComplaintHeader(text);
+  const parsed = parseComplaintMessage(text);
+  return parsed.isComplaint && Boolean(parsed.reporter.nrp);
+}
+
+async function sendComplaintMessages(waClient, { chatId, senderId, triage }) {
+  const throttleMs = Number(process.env.COMPLAINT_RESPONSE_DELAY_MS || 3000);
+  await delay(throttleMs);
+  await waClient.sendMessage(chatId, triage.operatorResponse);
+
+  const requesterRecipient = normalizeWhatsAppId(senderId || chatId);
+  if (!requesterRecipient || requesterRecipient === chatId) {
+    return;
+  }
+
+  await delay(throttleMs);
+  await waClient.sendMessage(requesterRecipient, triage.adminSummary);
+}
+
+function shouldUseLegacyComplaintFlow({ waClient }) {
+  if (String(process.env.WA_COMPLAINT_USE_LEGACY_FLOW || '').toLowerCase() === 'true') {
+    return true;
+  }
+  return typeof waClient?.sendMessage !== 'function';
+}
+
+async function handleWithLegacyResponder({
+  chatId,
+  text,
+  adminOptionSessions,
+  setSession,
+  getSession,
+  waClient,
+  pool,
+  userModel,
+}) {
+  const adminSession = adminOptionSessions?.[chatId];
+  if (adminSession?.timeout) {
+    clearTimeout(adminSession.timeout);
+  }
+  if (adminOptionSessions) {
+    delete adminOptionSessions[chatId];
+  }
+
+  if (typeof setSession !== 'function' || typeof getSession !== 'function') {
+    return false;
+  }
+
+  setSession(chatId, {
+    menu: 'clientrequest',
+    step: 'respondComplaint_message',
+    respondComplaint: {},
+  });
+
+  const updatedSession = getSession(chatId);
+  await clientRequestHandlers.respondComplaint_message(
+    updatedSession,
+    chatId,
+    text,
+    waClient,
+    pool,
+    userModel
+  );
+  return true;
 }
 
 export async function handleComplaintMessageIfApplicable({
   text,
   allowUserMenu,
   session,
-  isAdmin,
-  initialIsMyContact,
   senderId,
   gatewayIds,
   chatId,
@@ -111,41 +136,38 @@ export async function handleComplaintMessageIfApplicable({
   pool,
   userModel,
 }) {
-  if (
-    !shouldHandleComplaintMessage({
-      text,
-      allowUserMenu,
-      session,
-      isAdmin,
-      initialIsMyContact,
-      senderId,
-      gatewayIds,
-    })
-  ) {
+  if (!shouldHandleComplaintMessage({ text, allowUserMenu, session, senderId, gatewayIds })) {
     return false;
   }
 
-  const adminSession = adminOptionSessions?.[chatId];
-  if (adminSession?.timeout) {
-    clearTimeout(adminSession.timeout);
-  }
-  if (adminOptionSessions) {
-    delete adminOptionSessions[chatId];
+  if (
+    shouldUseLegacyComplaintFlow({ waClient }) &&
+    (typeof setSession === 'function' || typeof getSession === 'function')
+  ) {
+    return handleWithLegacyResponder({
+      chatId,
+      text,
+      adminOptionSessions,
+      setSession,
+      getSession,
+      waClient,
+      pool,
+      userModel,
+    });
   }
 
-  setSession(chatId, {
-    menu: 'clientrequest',
-    step: 'respondComplaint_message',
-    respondComplaint: {},
+  const parsed = parseComplaintMessage(text);
+  const dbQuery =
+    typeof pool?.query === 'function'
+      ? pool.query.bind(pool)
+      : async () => ({ rows: [] });
+
+  const triage = await triageComplaint(parsed, {
+    db: { query: dbQuery },
+    now: new Date(),
+    rapidApi: fetchSocialProfile,
   });
-  const updatedSession = getSession(chatId);
-  await clientRequestHandlers.respondComplaint_message(
-    updatedSession,
-    chatId,
-    text,
-    waClient,
-    pool,
-    userModel
-  );
+
+  await sendComplaintMessages(waClient, { chatId, senderId, triage });
   return true;
 }

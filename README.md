@@ -50,3 +50,21 @@ Untuk inisialisasi dan migrasi database:
 - Gunakan `node scripts/run_migration.js <migration-file>` untuk menjalankan migrasi dengan aman
 - Skema utama ada di `sql/schema.sql`
 - File migrasi ada di `sql/migrations/`
+
+
+## Complaint Triage + RapidAPI Account Check
+
+Alur komplain WhatsApp sekarang berjalan sebagai berikut:
+
+1. Pesan masuk diparse oleh `src/service/complaintParser.js` (`parseComplaintMessage`).
+2. Jika format `Pesan Komplain` valid, sistem menjalankan triage di `src/service/complaintTriageService.js` (`triageComplaint`).
+3. Triage menggabungkan evidence internal (username DB + audit likes/komentar) dan validasi eksternal RapidAPI (`src/service/rapidApiProfileService.js`).
+4. Template balasan operator dan ringkasan admin dibangun lewat `src/service/complaintResponseTemplates.js`.
+5. Handler WA (`src/service/waAutoComplaintService.js`) mengirim balasan operator ke chat asal komplain; jika komplain dari group maka ringkasan dikirim ke operator pengirim request. Untuk chat pribadi, balasan hanya ke chat pengirim.
+
+### ENV tambahan
+
+- `RAPIDAPI_KEY`
+- `RAPIDAPI_HOST`
+- `COMPLAINT_RESPONSE_DELAY_MS` (default `3000`)
+- `WA_COMPLAINT_USE_LEGACY_FLOW` (opsional, `true` untuk memaksa alur lama `respondComplaint_message` agar kompatibel penuh)

@@ -35,6 +35,8 @@ const {
 
 describe('waAutoComplaintService', () => {
   const originalGatewayAdmin = process.env.GATEWAY_WHATSAPP_ADMIN;
+  const originalComplaintDelay = process.env.COMPLAINT_RESPONSE_DELAY_MS;
+  const originalUseLegacyFlow = process.env.WA_COMPLAINT_USE_LEGACY_FLOW;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -45,6 +47,19 @@ describe('waAutoComplaintService', () => {
       delete process.env.GATEWAY_WHATSAPP_ADMIN;
     } else {
       process.env.GATEWAY_WHATSAPP_ADMIN = originalGatewayAdmin;
+    }
+
+
+    if (originalComplaintDelay === undefined) {
+      delete process.env.COMPLAINT_RESPONSE_DELAY_MS;
+    } else {
+      process.env.COMPLAINT_RESPONSE_DELAY_MS = originalComplaintDelay;
+    }
+
+    if (originalUseLegacyFlow === undefined) {
+      delete process.env.WA_COMPLAINT_USE_LEGACY_FLOW;
+    } else {
+      process.env.WA_COMPLAINT_USE_LEGACY_FLOW = originalUseLegacyFlow;
     }
   });
 
@@ -274,6 +289,74 @@ describe('waAutoComplaintService', () => {
     expect(respondComplaintMessageMock).toHaveBeenCalledTimes(1);
     expect(getSession(chatId)).toMatchObject({ menu: 'clientrequest' });
   });
+
+  test('group complaint sends operator response to group and summary to requester only', async () => {
+    process.env.WA_COMPLAINT_USE_LEGACY_FLOW = 'false';
+    process.env.COMPLAINT_RESPONSE_DELAY_MS = '0';
+
+    const sendMessage = jest.fn(async () => ({}));
+
+    const handled = await handleComplaintMessageIfApplicable({
+      text: [
+        'Pesan Komplain',
+        'NRP: 75020201',
+        'Nama: Tester',
+        'Username IG: @tester',
+        '',
+        'Kendala',
+        '- Sudah melaksanakan Instagram belum terdata.',
+      ].join('\n'),
+      allowUserMenu: false,
+      session: null,
+      senderId: '628123@c.us',
+      chatId: '120111@g.us',
+      adminOptionSessions: {},
+      setSession: jest.fn(),
+      getSession: jest.fn(),
+      waClient: { sendMessage },
+      pool: { query: jest.fn(async () => ({ rows: [] })) },
+      userModel: {},
+    });
+
+    expect(handled).toBe(true);
+    expect(sendMessage).toHaveBeenCalledWith('120111@g.us', expect.any(String));
+    expect(sendMessage).toHaveBeenCalledWith('628123@c.us', expect.any(String));
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  test('private complaint sends response only to requester chat', async () => {
+    process.env.WA_COMPLAINT_USE_LEGACY_FLOW = 'false';
+    process.env.COMPLAINT_RESPONSE_DELAY_MS = '0';
+
+    const sendMessage = jest.fn(async () => ({}));
+
+    const handled = await handleComplaintMessageIfApplicable({
+      text: [
+        'Pesan Komplain',
+        'NRP: 75020201',
+        'Nama: Tester',
+        'Username IG: @tester',
+        '',
+        'Kendala',
+        '- Sudah melaksanakan Instagram belum terdata.',
+      ].join('\n'),
+      allowUserMenu: false,
+      session: null,
+      senderId: '628123@c.us',
+      chatId: '628123@c.us',
+      adminOptionSessions: {},
+      setSession: jest.fn(),
+      getSession: jest.fn(),
+      waClient: { sendMessage },
+      pool: { query: jest.fn(async () => ({ rows: [] })) },
+      userModel: {},
+    });
+
+    expect(handled).toBe(true);
+    expect(sendMessage).toHaveBeenCalledWith('628123@c.us', expect.any(String));
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
 
   test('shouldHandleComplaintMessage returns true for starred header', () => {
     const complaintMessage = [
