@@ -51,26 +51,6 @@ Untuk inisialisasi dan migrasi database:
 - Skema utama ada di `sql/schema.sql`
 - File migrasi ada di `sql/migrations/`
 
-## Auto Sync PostgreSQL Local -> Neon
-
-Untuk sinkronisasi `insta_post` secara berkala ke database Neon (backup/replica), gunakan script:
-
-```bash
-npm run sync:neon
-```
-
-Script `sync-to-neon.js` membaca data baru berdasarkan `created_at` + `shortcode`, lalu melakukan upsert ke Neon agar data tetap idempotent.
-
-### ENV yang digunakan
-
-- `DATABASE_URL` (sumber/local PostgreSQL)
-- `DATABASE_BACKUP_URL` (tujuan/Neon)
-- `SYNC_INTERVAL_MS` (opsional, default `60000`)
-- `SYNC_BATCH_SIZE` (opsional, default `500`)
-- `SYNC_LOOKBACK_MINUTES` (opsional, default `5`)
-
-> Catatan: pastikan schema tabel `insta_post` di database tujuan kompatibel dengan schema utama project ini.
-
 
 ## Complaint Triage + RapidAPI Account Check
 
