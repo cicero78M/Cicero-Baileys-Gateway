@@ -51,6 +51,31 @@ Untuk inisialisasi dan migrasi database:
 - Skema utama ada di `sql/schema.sql`
 - File migrasi ada di `sql/migrations/`
 
+## Auto Sync PostgreSQL Lokal ke Neon
+
+Tersedia cron job sinkronisasi data `insta_post` dari database utama ke database backup Neon. Cron job ini berjalan otomatis setiap **1 jam** di proses utama aplikasi.
+
+- Service: `src/service/neonSyncService.js`
+- Auto start saat aplikasi boot (`app.js`)
+- Runner manual tetap tersedia: `npm run sync:neon`
+
+### Environment variable yang dibutuhkan
+
+- `DATABASE_URL`: koneksi PostgreSQL utama (source)
+- `DATABASE_BACKUP_URL`: koneksi Neon (target)
+- `ENABLE_NEON_SYNC_CRON` (opsional, default `true`): aktif/nonaktif cron job auto-sync di server
+- `NEON_SYNC_INTERVAL_MS` (opsional, default `3600000`): interval sync dalam milidetik (default 1 jam)
+- `NEON_SYNC_WINDOW_MINUTES` (opsional, default `60`): jendela data `created_at` yang disinkronkan per siklus
+
+### Mekanisme sync
+
+Setiap siklus, service akan:
+
+1. Mengambil data `insta_post` terbaru berdasarkan `created_at`.
+2. Melakukan `upsert` ke Neon menggunakan `ON CONFLICT (id) DO UPDATE` agar data tetap idempotent.
+3. Menulis log jumlah baris yang tersinkron.
+4. Melewati siklus baru jika siklus sebelumnya belum selesai untuk mencegah overlap eksekusi.
+
 
 ## Complaint Triage + RapidAPI Account Check
 

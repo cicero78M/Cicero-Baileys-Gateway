@@ -13,8 +13,15 @@ import { authRequired } from './src/middleware/authMiddleware.js';
 import { dedupRequest } from './src/middleware/dedupRequestMiddleware.js';
 import { sensitivePathGuard } from './src/middleware/sensitivePathGuard.js';
 import { startOtpWorker } from './src/service/otpQueue.js';
+import { startNeonSyncCronJob } from './src/service/neonSyncService.js';
 
 startOtpWorker().catch(err => console.error('[OTP] worker error', err));
+
+if (env.ENABLE_NEON_SYNC_CRON) {
+  startNeonSyncCronJob().catch((err) =>
+    console.error('[sync-to-neon] cron job failed to start', err),
+  );
+}
 
 const app = express();
 app.disable('etag');
