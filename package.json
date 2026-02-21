@@ -8,8 +8,7 @@
     "dev": "nodemon app.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "lint": "eslint .",
-    "format": "prettier --write \"**/*.js\"",
-    "sync:neon": "node sync-to-neon.js"
+    "format": "prettier --write \"**/*.js\""
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
