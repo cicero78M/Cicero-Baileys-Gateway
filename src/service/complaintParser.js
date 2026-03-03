@@ -1,3 +1,5 @@
+import { normalizeHandleValue } from '../utils/handleNormalizer.js';
+
 function normalizeText(value) {
   return String(value || '').replace(/\r/g, '').trim();
 }
@@ -57,6 +59,8 @@ function stripIssuePrefix(line) {
 
 function normalizeUsername(value) {
   if (!value) return '';
+  const normalized = normalizeHandleValue(value);
+  if (normalized) return normalized;
   return String(value).trim();
 }
 

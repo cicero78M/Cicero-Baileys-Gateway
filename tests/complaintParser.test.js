@@ -31,6 +31,20 @@ describe('complaintParser', () => {
     ]);
   });
 
+  test('normalizes Instagram and TikTok profile links into handles', () => {
+    const input = [
+      'Pesan Komplain',
+      'NRP: 94070752',
+      'Username IG: https://www.instagram.com/polsek_pagerwojo?igsh=MTY0Y29pdjc5M3UxcQ==',
+      'Username TikTok: https://www.tiktok.com/@polsek_pagerwojo?_r=1&_t=ZS-94NjrZjcqPp',
+    ].join('\n');
+
+    const result = parseComplaintMessage(input);
+
+    expect(result.reporter.igUsername).toBe('@polsek_pagerwojo');
+    expect(result.reporter.tiktokUsername).toBe('@polsek_pagerwojo');
+  });
+
   test('supports detail kendala header and bullet extraction', () => {
     const input = [
       'Pesan Komplain',
