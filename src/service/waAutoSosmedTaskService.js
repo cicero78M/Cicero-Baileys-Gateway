@@ -31,13 +31,32 @@ function extractUrls(text) {
 
 function isSosmedTaskBroadcastFormat(text) {
   const normalized = cleanText(text).toLowerCase();
-  return (
-    normalized.includes('selamat siang komandan') &&
-    normalized.includes('mohon ijin dibantu') &&
-    normalized.includes('follow') &&
-    normalized.includes('subscribe') &&
-    normalized.includes('repost')
-  );
+  const normalizedForMatch = normalized
+    .replace(/[~*_`]/g, ' ')
+    .replace(/[•●▪◦◆►▶▷-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const rules = [
+    {
+      label: 'salam',
+      pattern: /\bselamat\s+(pagi|siang|sore|malam)(?:\s+(komandan|senior|rr))?\b/,
+    },
+    { label: 'mohon ijin dibantu', pattern: /\bmohon\s+i[sz]in\s+dibantu\b/ },
+    { label: 'follow', pattern: /\bfollow\b/ },
+    { label: 'subscribe', pattern: /\bsubscribe\b/ },
+    { label: 'repost', pattern: /\brepost\b/ },
+  ];
+
+  const missingRules = rules.filter(({ pattern }) => !pattern.test(normalizedForMatch));
+  if (missingRules.length) {
+    console.debug(
+      `[AUTO-SOSMED-TASK] Broadcast format tidak lolos: missing ${missingRules.map(({ label }) => label).join(', ')}`
+    );
+    return false;
+  }
+
+  return true;
 }
 
 function classifyUrls(urls) {
@@ -162,4 +181,3 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, wa
 
   return true;
 }
-
