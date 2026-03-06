@@ -11,6 +11,7 @@ import {
   fetchTiktokPostDetail,
 } from "../../service/tiktokApi.js";
 import { extractVideoId } from "../../utils/tiktokHelper.js";
+import axios from "axios";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -19,6 +20,73 @@ const ADMIN_WHATSAPP = (process.env.ADMIN_WHATSAPP || "")
   .map((s) => s.trim())
   .filter(Boolean);
 
+
+
+function extractVideoIdFromTikTokUrl(rawUrl) {
+  if (!rawUrl) return "";
+  try {
+    const parsed = new URL(rawUrl);
+    const pathMatch = parsed.pathname.match(/\/video\/(\d{8,21})/i);
+    if (pathMatch?.[1]) {
+      return pathMatch[1];
+    }
+
+    const params = parsed.searchParams;
+    const knownKeys = ["video_id", "videoId", "item_id", "itemId", "share_video_id"];
+    for (const key of knownKeys) {
+      const value = (params.get(key) || "").trim();
+      if (/^\d{8,21}$/.test(value)) {
+        return value;
+      }
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
+}
+
+async function resolveTikTokVideoId(videoInput) {
+  const rawInput = String(videoInput || "").trim();
+  if (!rawInput) {
+    return "";
+  }
+
+  if (/^\d{8,21}$/.test(rawInput)) {
+    return rawInput;
+  }
+
+  const isTiktokUrl = /(?:tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com)/i.test(rawInput);
+  if (!isTiktokUrl) {
+    return "";
+  }
+
+  const videoIdFromInputUrl = extractVideoIdFromTikTokUrl(rawInput);
+  if (videoIdFromInputUrl) {
+    return videoIdFromInputUrl;
+  }
+
+  try {
+    const response = await axios.get(rawInput, {
+      maxRedirects: 5,
+      timeout: 10000,
+      validateStatus: () => true,
+    });
+
+    const resolvedUrl = response?.request?.res?.responseUrl || rawInput;
+    const resolvedVideoId = extractVideoIdFromTikTokUrl(resolvedUrl);
+    if (resolvedVideoId) {
+      return resolvedVideoId;
+    }
+  } catch (error) {
+    sendDebug({
+      tag: "TIKTOK MANUAL",
+      msg: `Gagal resolve shortlink TikTok: ${error?.message || error}`,
+    });
+  }
+
+  return extractVideoId(rawInput);
+}
 
 /**
  * Cek apakah unixTimestamp adalah hari ini (Asia/Jakarta)
@@ -60,29 +128,6 @@ function parseNumeric(value, fallback = null) {
   return fallback;
 }
 
-function parseCreatedAt(value) {
-  if (!value) return null;
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value > 1e12 ? new Date(value) : new Date(value * 1000);
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    if (/^\d+$/.test(trimmed)) {
-      const num = Number(trimmed);
-      return num > 1e12 ? new Date(num) : new Date(num * 1000);
-    }
-    const parsed = new Date(trimmed);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed;
-    }
-  }
-  return null;
-}
-
 /**
  * Cek apakah sekarang (Asia/Jakarta) berada di antara 11:00 sampai 17:15.
  * Dipakai untuk membatasi fallback RapidAPI via username agar hanya berjalan pada jam sibuk.
@@ -113,10 +158,10 @@ export async function fetchAndStoreSingleTiktokPost(clientId, videoInput) {
     throw new Error(`Client ${clientId} tidak ditemukan.`);
   }
 
-  const videoId = extractVideoId(videoInput);
+  const videoId = await resolveTikTokVideoId(videoInput);
   if (!videoId) {
     throw new Error(
-      "Format link atau video ID TikTok tidak dikenali. Pastikan link berisi /video/<ID>."
+      "Format link, shortlink, atau video ID TikTok tidak dikenali. Pastikan link valid atau berisi /video/<ID>."
     );
   }
 
@@ -127,10 +172,7 @@ export async function fetchAndStoreSingleTiktokPost(clientId, videoInput) {
   });
 
   const detail = await fetchTiktokPostDetail(videoId);
-  const createdAt =
-    parseCreatedAt(detail?.createTime) ||
-    parseCreatedAt(detail?.create_time) ||
-    parseCreatedAt(detail?.timestamp);
+  const createdAt = new Date().toISOString();
 
   const stats = detail?.stats || {};
   const statsV2 = detail?.statsV2 || {};
