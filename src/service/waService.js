@@ -90,6 +90,7 @@ import {
 import {
   handleComplaintMessageIfApplicable,
 } from "./waAutoComplaintService.js";
+import { handleAutoSosmedTaskMessageIfApplicable } from "./waAutoSosmedTaskService.js";
 import {
   isAdminWhatsApp,
   formatToWhatsAppId,
@@ -1238,9 +1239,21 @@ export function createHandleMessage(waClient, options = {}) {
         pool,
         userModel,
       });
-      if (!handledGroupComplaint) {
-        console.log(`${clientLabel} Ignored group message from ${chatId}`);
+      if (handledGroupComplaint) {
+        return;
       }
+
+      const handledGroupTaskBroadcast = await handleAutoSosmedTaskMessageIfApplicable({
+        text,
+        chatId,
+        session,
+        waClient,
+      });
+      if (handledGroupTaskBroadcast) {
+        return;
+      }
+
+      console.log(`${clientLabel} Ignored group message from ${chatId}`);
       return;
     }
 
@@ -1395,6 +1408,16 @@ export function createHandleMessage(waClient, options = {}) {
         userModel,
       });
       if (handledComplaint) {
+        return;
+      }
+
+      const handledTaskBroadcast = await handleAutoSosmedTaskMessageIfApplicable({
+        text,
+        chatId,
+        session,
+        waClient,
+      });
+      if (handledTaskBroadcast) {
         return;
       }
 
@@ -1600,6 +1623,16 @@ export async function handleGatewayMessage(msg) {
     userModel,
   });
   if (handledComplaint) {
+    return;
+  }
+
+  const handledTaskBroadcast = await handleAutoSosmedTaskMessageIfApplicable({
+    text,
+    chatId,
+    session,
+    waClient,
+  });
+  if (handledTaskBroadcast) {
     return;
   }
 
