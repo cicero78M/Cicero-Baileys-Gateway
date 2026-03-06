@@ -128,29 +128,6 @@ function parseNumeric(value, fallback = null) {
   return fallback;
 }
 
-function parseCreatedAt(value) {
-  if (!value) return null;
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value > 1e12 ? new Date(value) : new Date(value * 1000);
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    if (/^\d+$/.test(trimmed)) {
-      const num = Number(trimmed);
-      return num > 1e12 ? new Date(num) : new Date(num * 1000);
-    }
-    const parsed = new Date(trimmed);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed;
-    }
-  }
-  return null;
-}
-
 /**
  * Cek apakah sekarang (Asia/Jakarta) berada di antara 11:00 sampai 17:15.
  * Dipakai untuk membatasi fallback RapidAPI via username agar hanya berjalan pada jam sibuk.
@@ -195,10 +172,7 @@ export async function fetchAndStoreSingleTiktokPost(clientId, videoInput) {
   });
 
   const detail = await fetchTiktokPostDetail(videoId);
-  const createdAt =
-    parseCreatedAt(detail?.createTime) ||
-    parseCreatedAt(detail?.create_time) ||
-    parseCreatedAt(detail?.timestamp);
+  const createdAt = new Date().toISOString();
 
   const stats = detail?.stats || {};
   const statsV2 = detail?.statsV2 || {};

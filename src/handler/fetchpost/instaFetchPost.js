@@ -379,7 +379,7 @@ export async function fetchSinglePostKhusus(linkOrCode, clientId) {
       ? info.carousel_media.map(i => i.image_versions?.items?.[0]?.url).filter(Boolean)
       : null,
     is_carousel: Array.isArray(info.carousel_media) && info.carousel_media.length > 1,
-    created_at: info.taken_at ? new Date(info.taken_at * 1000).toISOString() : null
+    created_at: new Date().toISOString()
   }; 
   await upsertInstaPostKhusus(data);
   await upsertInstaPost(data);
