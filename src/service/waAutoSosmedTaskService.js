@@ -3,7 +3,7 @@ import { fetchSinglePostKhusus } from '../handler/fetchpost/instaFetchPost.js';
 import { fetchAndStoreSingleTiktokPost } from '../handler/fetchpost/tiktokFetchPost.js';
 import { generateSosmedTaskMessage } from '../handler/fetchabsensi/sosmedTask.js';
 
-const DEFAULT_CLIENT_ID = 'DITBINMAS';
+const AUTO_TASK_CLIENT_ID = 'DITINTELKAM';
 
 function getJakartaDayDateLabel() {
   const now = new Date();
@@ -58,16 +58,11 @@ function classifyUrls(urls) {
   return { instagramLinks, tiktokLinks };
 }
 
-function resolveTargetClientId(session) {
-  const rawClientId =
-    session?.dir_client_id ||
-    session?.selectedClientId ||
-    process.env.WA_AUTO_TASK_CLIENT_ID ||
-    DEFAULT_CLIENT_ID;
-  return String(rawClientId || DEFAULT_CLIENT_ID).trim().toUpperCase();
+function resolveTargetClientId() {
+  return AUTO_TASK_CLIENT_ID;
 }
 
-export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, session, waClient }) {
+export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, waClient }) {
   if (!isSosmedTaskBroadcastFormat(text)) {
     return false;
   }
@@ -79,11 +74,17 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
     return false;
   }
 
-  const targetClientId = resolveTargetClientId(session);
+  const targetClientId = resolveTargetClientId();
   const targetClient = await findClientById(targetClientId);
-  const targetLabel = targetClient?.nama
-    ? `${targetClient.nama} (${targetClientId})`
-    : targetClientId;
+  if (!targetClient) {
+    await waClient.sendMessage(
+      chatId,
+      `❌ Auto workflow dibatalkan karena client *${targetClientId}* tidak ditemukan.`
+    );
+    return true;
+  }
+
+  const targetLabel = `${targetClient.nama} (${targetClientId})`;
 
   await waClient.sendMessage(
     chatId,
