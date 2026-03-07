@@ -134,4 +134,41 @@ describe('handleAutoSosmedTaskMessageIfApplicable', () => {
     expect(mockHandleFetchKomentarTiktokBatch).not.toHaveBeenCalled();
     expect(waClient.sendMessage).not.toHaveBeenCalled();
   });
+
+  test('tetap mengirim notifikasi fallback saat dependency awal throw error', async () => {
+    const waClient = { sendMessage: jest.fn().mockResolvedValue(undefined) };
+    const text =
+      'Selamat siang komandan\nMohon izin dibantu\nFollow\nSubscribe\nRepost\nhttps://instagram.com/p/error123';
+
+    mockFindClientById.mockRejectedValue(new Error('DB lookup failed'));
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await handleAutoSosmedTaskMessageIfApplicable({
+      text,
+      chatId: 'chat-6',
+      waClient,
+    });
+
+    expect(result).toBe(true);
+    expect(waClient.sendMessage).toHaveBeenCalledWith(
+      'chat-6',
+      '⚠️ Auto workflow terdeteksi tapi gagal diproses, silakan cek log.'
+    );
+    expect(mockFetchSinglePostKhusus).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      '[AUTO-SOSMED-TASK] Workflow gagal diproses:',
+      expect.objectContaining({
+        chatId: 'chat-6',
+        urlSummary: {
+          total: 1,
+          instagram: 1,
+          tiktok: 0,
+        },
+        errorMessage: 'DB lookup failed',
+      })
+    );
+
+    consoleErrorSpy.mockRestore();
+  });
+
 });
