@@ -20,43 +20,98 @@ function getJakartaDayDateLabel() {
   return `${hari}, ${tanggal}`;
 }
 
-function cleanText(text) {
-  return String(text || '').replace(/\u2060|\u200b|\u200c|\u200d/g, '');
+export function cleanText(text) {
+  return String(text || '')
+    .replace(/\\n/g, ' ')
+    .replace(/[,:;.!?()[\]{}"'“”‘’/\\|]+/g, ' ')
+    .replace(/\u2060|\u200b|\u200c|\u200d/g, '');
 }
 
 function extractUrls(text) {
-  const matches = cleanText(text).match(/https?:\/\/[^\s)]+/gi);
+  const textForUrlScan = String(text || '')
+    .replace(/\\n|\n/g, ' ')
+    .replace(/\u2060|\u200b|\u200c|\u200d/g, '');
+  const matches = textForUrlScan.match(/https?:\/\/[^\s)]+/gi);
   return Array.from(new Set((matches || []).map((url) => url.trim())));
 }
 
-function isSosmedTaskBroadcastFormat(text) {
+
+function normalizeForMatching(text) {
   const normalized = cleanText(text).toLowerCase();
-  const normalizedForMatch = normalized
+  return normalized
     .replace(/[~*_`]/g, ' ')
     .replace(/[•●▪◦◆►▶▷-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
 
-  const rules = [
-    {
-      label: 'salam',
-      pattern: /\bselamat\s+(pagi|siang|sore|malam)(?:\s+(komandan|senior|rr))?\b/,
-    },
-    { label: 'mohon ijin dibantu', pattern: /\bmohon\s+i[sz]in\s+dibantu\b/ },
-    { label: 'follow', pattern: /\bfollow\b/ },
-    { label: 'subscribe', pattern: /\bsubscribe\b/ },
-    { label: 'repost', pattern: /\brepost\b/ },
-  ];
+function evaluateSosmedTaskBroadcast(text) {
+  const normalizedForMatch = normalizeForMatching(text);
+  const urls = extractUrls(text);
+  const { instagramLinks, tiktokLinks } = classifyUrls(urls);
 
-  const missingRules = rules.filter(({ pattern }) => !pattern.test(normalizedForMatch));
-  if (missingRules.length) {
-    console.debug(
-      `[AUTO-SOSMED-TASK] Broadcast format tidak lolos: missing ${missingRules.map(({ label }) => label).join(', ')}`
-    );
-    return false;
+  const rules = {
+    salam: /\bselamat\s+(pagi|siang|sore|malam)\b/,
+    mohonIjinDibantu: /\bmohon\s+i[sz]in(?:\s+dibantu|\s+bantu)?\b/,
+    follow: /\bfollow\b/,
+    subscribe: /\bsubscribe\b/,
+    repost: /\brepost\b/,
+  };
+
+  const matchMap = {
+    salam: rules.salam.test(normalizedForMatch),
+    mohonIjinDibantu: rules.mohonIjinDibantu.test(normalizedForMatch),
+    follow: rules.follow.test(normalizedForMatch),
+    subscribe: rules.subscribe.test(normalizedForMatch),
+    repost: rules.repost.test(normalizedForMatch),
+  };
+
+  const actionMatches = [
+    matchMap.mohonIjinDibantu,
+    matchMap.follow,
+    matchMap.subscribe,
+    matchMap.repost,
+  ].filter(Boolean).length;
+  const hasSupportedUrl = instagramLinks.length > 0 || tiktokLinks.length > 0;
+
+  const score = Number(matchMap.salam) + actionMatches + Number(hasSupportedUrl);
+  const threshold = 3;
+  const failedRequirements = [];
+  if (!matchMap.salam) {
+    failedRequirements.push('salam');
+  }
+  if (actionMatches < 1) {
+    failedRequirements.push('ajakan aksi');
+  }
+  if (!hasSupportedUrl) {
+    failedRequirements.push('minimal 1 URL sosmed didukung');
+  }
+  if (score < threshold) {
+    failedRequirements.push(`score<threshold (${score}<${threshold})`);
   }
 
-  return true;
+  const result = {
+    isMatch: failedRequirements.length === 0,
+    normalizedForMatch,
+    score,
+    threshold,
+    failedRequirements,
+    ruleMatches: {
+      ...matchMap,
+      actionMatches,
+      hasSupportedUrl,
+    },
+    urls,
+    instagramLinks,
+    tiktokLinks,
+  };
+
+  console.debug('[AUTO-SOSMED-TASK] Broadcast parser eval:', result);
+  return result;
+}
+
+export function isSosmedTaskBroadcastFormat(text) {
+  return evaluateSosmedTaskBroadcast(text).isMatch;
 }
 
 function classifyUrls(urls) {
@@ -82,16 +137,17 @@ function resolveTargetClientId() {
 }
 
 export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, waClient }) {
-  if (!isSosmedTaskBroadcastFormat(text)) {
+  const broadcastEval = evaluateSosmedTaskBroadcast(text);
+  if (!broadcastEval.isMatch) {
+    console.debug('[AUTO-SOSMED-TASK] Broadcast format tidak lolos:', {
+      normalizedForMatch: broadcastEval.normalizedForMatch,
+      failedRequirements: broadcastEval.failedRequirements,
+      ruleMatches: broadcastEval.ruleMatches,
+    });
     return false;
   }
 
-  const urls = extractUrls(text);
-  const { instagramLinks, tiktokLinks } = classifyUrls(urls);
-
-  if (!instagramLinks.length && !tiktokLinks.length) {
-    return false;
-  }
+  const { instagramLinks, tiktokLinks } = broadcastEval;
 
   const targetClientId = resolveTargetClientId();
   const targetClient = await findClientById(targetClientId);
