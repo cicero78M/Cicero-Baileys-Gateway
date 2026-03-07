@@ -148,92 +148,112 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, wa
   }
 
   const { instagramLinks, tiktokLinks } = broadcastEval;
-
   const targetClientId = resolveTargetClientId();
-  const targetClient = await findClientById(targetClientId);
-  if (!targetClient) {
+
+  try {
+    const targetClient = await findClientById(targetClientId);
+    if (!targetClient) {
+      await waClient.sendMessage(
+        chatId,
+        `❌ Auto workflow dibatalkan karena client *${targetClientId}* tidak ditemukan.`
+      );
+      return true;
+    }
+
+    const targetLabel = `${targetClient.nama} (${targetClientId})`;
+
     await waClient.sendMessage(
       chatId,
-      `❌ Auto workflow dibatalkan karena client *${targetClientId}* tidak ditemukan.`
+      `⏳ Format broadcast tugas terdeteksi. Menjalankan workflow otomatis Input post manual + Ambil pesan list tugas untuk *${targetLabel}*.`
     );
-    return true;
-  }
 
-  const targetLabel = `${targetClient.nama} (${targetClientId})`;
+    const igShortcodes = [];
+    const tiktokVideoIds = [];
+    const failures = [];
 
-  await waClient.sendMessage(
-    chatId,
-    `⏳ Format broadcast tugas terdeteksi. Menjalankan workflow otomatis Input post manual + Ambil pesan list tugas untuk *${targetLabel}*.`
-  );
-
-  const igShortcodes = [];
-  const tiktokVideoIds = [];
-  const failures = [];
-
-  for (const instagramLink of instagramLinks) {
-    try {
-      const result = await fetchSinglePostKhusus(instagramLink, targetClientId);
-      if (result?.shortcode) {
-        igShortcodes.push(result.shortcode);
+    for (const instagramLink of instagramLinks) {
+      try {
+        const result = await fetchSinglePostKhusus(instagramLink, targetClientId);
+        if (result?.shortcode) {
+          igShortcodes.push(result.shortcode);
+        }
+      } catch (error) {
+        failures.push(`IG ${instagramLink} => ${error?.message || 'gagal diproses'}`);
       }
-    } catch (error) {
-      failures.push(`IG ${instagramLink} => ${error?.message || 'gagal diproses'}`);
     }
-  }
 
-  for (const tiktokLink of tiktokLinks) {
-    try {
-      const result = await fetchAndStoreSingleTiktokPost(targetClientId, tiktokLink);
-      if (result?.videoId) {
-        tiktokVideoIds.push(result.videoId);
+    for (const tiktokLink of tiktokLinks) {
+      try {
+        const result = await fetchAndStoreSingleTiktokPost(targetClientId, tiktokLink);
+        if (result?.videoId) {
+          tiktokVideoIds.push(result.videoId);
+        }
+      } catch (error) {
+        failures.push(`TikTok ${tiktokLink} => ${error?.message || 'gagal diproses'}`);
       }
-    } catch (error) {
-      failures.push(`TikTok ${tiktokLink} => ${error?.message || 'gagal diproses'}`);
     }
-  }
 
-  if (igShortcodes.length) {
-    const { handleFetchLikesInstagram } = await import('../handler/fetchengagement/fetchLikesInstagram.js');
-    await handleFetchLikesInstagram(null, null, targetClientId, {
-      shortcodes: igShortcodes,
-      sourceType: 'manual_input',
-      enrichComments: false,
+    if (igShortcodes.length) {
+      const { handleFetchLikesInstagram } = await import('../handler/fetchengagement/fetchLikesInstagram.js');
+      await handleFetchLikesInstagram(null, null, targetClientId, {
+        shortcodes: igShortcodes,
+        sourceType: 'manual_input',
+        enrichComments: false,
+      });
+    }
+
+    if (tiktokVideoIds.length) {
+      const { handleFetchKomentarTiktokBatch } = await import('../handler/fetchengagement/fetchCommentTiktok.js');
+      await handleFetchKomentarTiktokBatch(null, null, targetClientId, {
+        videoIds: tiktokVideoIds,
+        sourceType: 'manual_input',
+      });
+    }
+
+    const { text: taskMessage } = await generateSosmedTaskMessage(targetClientId, {
+      skipTiktokFetch: true,
+      skipLikesFetch: true,
     });
-  }
 
-  if (tiktokVideoIds.length) {
-    const { handleFetchKomentarTiktokBatch } = await import('../handler/fetchengagement/fetchCommentTiktok.js');
-    await handleFetchKomentarTiktokBatch(null, null, targetClientId, {
-      videoIds: tiktokVideoIds,
-      sourceType: 'manual_input',
+    const statusSummary =
+      `✅ Input manual selesai.` +
+      `\n• Instagram diproses: ${instagramLinks.length}` +
+      `\n• TikTok diproses: ${tiktokLinks.length}` +
+      `\n• Gagal: ${failures.length}`;
+
+    await waClient.sendMessage(chatId, statusSummary);
+
+    if (failures.length) {
+      await waClient.sendMessage(chatId, `⚠️ Detail gagal:\n${failures.map((item) => `- ${item}`).join('\n')}`);
+    }
+
+    const tanggalPengambilan = getJakartaDayDateLabel();
+    await waClient.sendMessage(
+      chatId,
+      `*Header Pesan Tugas*\n` +
+        `Pesan list tugas Instagram & TikTok untuk *${targetClientId}*\n` +
+        `Hari/Tanggal pengambilan tugas: ${tanggalPengambilan}\n\n` +
+        `${taskMessage}`
+    );
+  } catch (error) {
+    const shortStack = String(error?.stack || '')
+      .split('\n')
+      .slice(0, 5)
+      .join('\n');
+
+    console.error('[AUTO-SOSMED-TASK] Workflow gagal diproses:', {
+      chatId,
+      urlSummary: {
+        total: instagramLinks.length + tiktokLinks.length,
+        instagram: instagramLinks.length,
+        tiktok: tiktokLinks.length,
+      },
+      errorMessage: error?.message || 'unknown_error',
+      stack: shortStack,
     });
+
+    await waClient.sendMessage(chatId, '⚠️ Auto workflow terdeteksi tapi gagal diproses, silakan cek log.');
   }
-
-  const { text: taskMessage } = await generateSosmedTaskMessage(targetClientId, {
-    skipTiktokFetch: true,
-    skipLikesFetch: true,
-  });
-
-  const statusSummary =
-    `✅ Input manual selesai.` +
-    `\n• Instagram diproses: ${instagramLinks.length}` +
-    `\n• TikTok diproses: ${tiktokLinks.length}` +
-    `\n• Gagal: ${failures.length}`;
-
-  await waClient.sendMessage(chatId, statusSummary);
-
-  if (failures.length) {
-    await waClient.sendMessage(chatId, `⚠️ Detail gagal:\n${failures.map((item) => `- ${item}`).join('\n')}`);
-  }
-
-  const tanggalPengambilan = getJakartaDayDateLabel();
-  await waClient.sendMessage(
-    chatId,
-    `*Header Pesan Tugas*\n` +
-      `Pesan list tugas Instagram & TikTok untuk *${targetClientId}*\n` +
-      `Hari/Tanggal pengambilan tugas: ${tanggalPengambilan}\n\n` +
-      `${taskMessage}`
-  );
 
   return true;
 }
