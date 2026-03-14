@@ -48,12 +48,19 @@ function normalizeForMatching(text) {
 function evaluateSosmedTaskBroadcast(text) {
   const normalizedForMatch = normalizeForMatching(text);
   const urls = extractUrls(text);
-  const { instagramLinks, tiktokLinks } = classifyUrls(urls);
+  const {
+    instagramLinks,
+    tiktokLinks,
+    ignoredLinks,
+  } = classifyUrls(urls);
 
   const rules = {
     salam: /\bselamat\s+(pagi|siang|sore|malam)\b/,
     mohonIjinDibantu: /\bmohon\s+i[sz]in(?:\s+dibantu|\s+bantu)?\b/,
     follow: /\bfollow\b/,
+    like: /\blike\b/,
+    share: /\bshare\b/,
+    comment: /\bcomment\b/,
     subscribe: /\bsubscribe\b/,
     repost: /\brepost\b/,
   };
@@ -62,6 +69,9 @@ function evaluateSosmedTaskBroadcast(text) {
     salam: rules.salam.test(normalizedForMatch),
     mohonIjinDibantu: rules.mohonIjinDibantu.test(normalizedForMatch),
     follow: rules.follow.test(normalizedForMatch),
+    like: rules.like.test(normalizedForMatch),
+    share: rules.share.test(normalizedForMatch),
+    comment: rules.comment.test(normalizedForMatch),
     subscribe: rules.subscribe.test(normalizedForMatch),
     repost: rules.repost.test(normalizedForMatch),
   };
@@ -69,10 +79,14 @@ function evaluateSosmedTaskBroadcast(text) {
   const actionMatches = [
     matchMap.mohonIjinDibantu,
     matchMap.follow,
+    matchMap.like,
+    matchMap.share,
+    matchMap.comment,
     matchMap.subscribe,
     matchMap.repost,
   ].filter(Boolean).length;
-  const hasSupportedUrl = instagramLinks.length > 0 || tiktokLinks.length > 0;
+  const supportedUrlCount = instagramLinks.length + tiktokLinks.length;
+  const hasSupportedUrl = supportedUrlCount > 0;
 
   const score = Number(matchMap.salam) + actionMatches + Number(hasSupportedUrl);
   const threshold = 3;
@@ -104,6 +118,7 @@ function evaluateSosmedTaskBroadcast(text) {
     urls,
     instagramLinks,
     tiktokLinks,
+    ignoredLinks,
   };
 
   console.debug('[AUTO-SOSMED-TASK] Broadcast parser eval:', result);
@@ -117,6 +132,7 @@ export function isSosmedTaskBroadcastFormat(text) {
 function classifyUrls(urls) {
   const instagramLinks = [];
   const tiktokLinks = [];
+  const ignoredLinks = [];
 
   for (const url of urls) {
     const lowerUrl = url.toLowerCase();
@@ -126,10 +142,16 @@ function classifyUrls(urls) {
     }
     if (lowerUrl.includes('tiktok.com/')) {
       tiktokLinks.push(url);
+      continue;
     }
+    ignoredLinks.push(url);
   }
 
-  return { instagramLinks, tiktokLinks };
+  return {
+    instagramLinks,
+    tiktokLinks,
+    ignoredLinks,
+  };
 }
 
 function resolveTargetClientId() {
@@ -147,7 +169,11 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, wa
     return false;
   }
 
-  const { instagramLinks, tiktokLinks } = broadcastEval;
+  const {
+    instagramLinks,
+    tiktokLinks,
+    ignoredLinks,
+  } = broadcastEval;
   const targetClientId = resolveTargetClientId();
 
   try {
@@ -219,6 +245,7 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, wa
       `✅ Input manual selesai.` +
       `\n• Instagram diproses: ${instagramLinks.length}` +
       `\n• TikTok diproses: ${tiktokLinks.length}` +
+      `\n• Link non Instagram/TikTok diabaikan: ${ignoredLinks.length}` +
       `\n• Gagal: ${failures.length}`;
 
     await waClient.sendMessage(chatId, statusSummary);
