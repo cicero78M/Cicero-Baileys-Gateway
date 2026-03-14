@@ -1234,6 +1234,20 @@ async function formatRekapAllSosmed(
     });
   };
 
+  const extractTiktokHandleByVideoId = (text, videoId) => {
+    const normalizedVideoId = String(videoId || "").trim();
+    if (!normalizedVideoId) return null;
+    const normalized = normalizeText(text);
+    const escapedId = normalizedVideoId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(
+      `https?://(?:www\\.)?tiktok\\.com/@([^/\\s?#]+)/video/${escapedId}(?:[/?#][^\\s]*)?`,
+      "i"
+    );
+    const match = normalized.match(regex);
+    const username = (match?.[1] || "").trim().replace(/^@/, "");
+    return username || null;
+  };
+
   const extractTiktokTasks = (text) => {
     const normalized = normalizeText(text);
     const sanitized = normalized
@@ -1617,7 +1631,6 @@ async function formatRekapAllSosmed(
     let igPosts = [];
     let ttPosts = [];
     let clientType = null;
-    let tiktokUsername = null;
 
     const normalizedClientId = (clientId || resolvedClientName)
       .toString()
@@ -1626,7 +1639,6 @@ async function formatRekapAllSosmed(
     try {
       const client = await findClientById(normalizedClientId);
       clientType = client?.client_type?.toLowerCase() || null;
-      tiktokUsername = (client?.client_tiktok || "").replace(/^@/, "");
     } catch {
       clientType = null;
     }
@@ -1655,12 +1667,59 @@ async function formatRekapAllSosmed(
         return `https://www.instagram.com/p/${post.shortcode}${uploadLabel}`;
       });
 
+    const resolveTiktokLinkFromPost = (post) => {
+      if (!post?.video_id) return null;
+
+      const rawLinkCandidates = [
+        post.url,
+        post.video_url,
+        post.share_url,
+        post.link,
+        post.content_url,
+        post.source_url,
+        post.permalink,
+      ];
+      const rawLink = rawLinkCandidates.find(
+        (candidate) => typeof candidate === "string" && candidate.trim()
+      );
+
+      const rawLinkHandleMatch = String(rawLink || "").match(
+        /tiktok\.com\/@([^/\s?#]+)\/video\//i
+      );
+      const rawLinkUsername = (rawLinkHandleMatch?.[1] || "").trim().replace(/^@/, "");
+      if (rawLinkUsername)
+        return `https://www.tiktok.com/@${rawLinkUsername}/video/${post.video_id}`;
+
+      const usernameCandidates = [
+        post.username,
+        post.author_username,
+        post.content_username,
+        post.unique_id,
+      ];
+      const username = usernameCandidates.find(
+        (candidate) => typeof candidate === "string" && candidate.trim()
+      );
+      if (username)
+        return `https://www.tiktok.com/@${username
+          .trim()
+          .replace(/^@/, "")}/video/${post.video_id}`;
+
+      const narrativeUsername = extractTiktokHandleByVideoId(
+        scopedTtNarrative,
+        post.video_id
+      );
+      if (narrativeUsername)
+        return `https://www.tiktok.com/@${narrativeUsername}/video/${post.video_id}`;
+
+      if (rawLink) return rawLink.trim();
+
+      return `https://www.tiktok.com/video/${post.video_id}`;
+    };
+
     const ttLinesFromPosts = ttPosts
       .filter((post) => post?.video_id)
       .map((post) => {
-        const link = tiktokUsername
-          ? `https://www.tiktok.com/@${tiktokUsername}/video/${post.video_id}`
-          : `https://www.tiktok.com/video/${post.video_id}`;
+        const link = resolveTiktokLinkFromPost(post);
         const uploadTime = formatUploadTime(post?.created_at);
         const uploadLabel = uploadTime ? ` — ${uploadTime} WIB` : "";
         return `${link}${uploadLabel}`;

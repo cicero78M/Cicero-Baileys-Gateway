@@ -141,16 +141,58 @@ test('generateSosmedTaskMessage preserves ordering from sources', async () => {
   expect(igSecond).toBeGreaterThan(-1);
   expect(igFirst).toBeLessThan(igSecond);
 
-  const ttFirst = text.indexOf('/@operator/video/vid-b');
-  const ttSecond = text.indexOf('/@operator/video/vid-a');
+  const ttFirst = text.indexOf('/video/vid-b');
+  const ttSecond = text.indexOf('/video/vid-a');
   expect(ttFirst).toBeGreaterThan(-1);
   expect(ttSecond).toBeGreaterThan(-1);
   expect(ttFirst).toBeLessThan(ttSecond);
 
   expect(text).toContain('1. https://www.instagram.com/p/latest');
   expect(text).toContain('2. [BARU] https://www.instagram.com/p/earlier');
-  expect(text).toContain('1. https://www.tiktok.com/@operator/video/vid-b');
-  expect(text).toContain('2. [BARU] https://www.tiktok.com/@operator/video/vid-a');
+  expect(text).toContain('1. https://www.tiktok.com/video/vid-b');
+  expect(text).toContain('2. [BARU] https://www.tiktok.com/video/vid-a');
+});
+
+
+
+test('generateSosmedTaskMessage normalizes handle link from raw TikTok URL', async () => {
+  mockFindClientById.mockResolvedValue({ nama: 'Unit', client_tiktok: '@jatimreporter' });
+  mockGetShortcodesTodayByClient.mockResolvedValue([]);
+  mockGetInstaPostsTodayByClient.mockResolvedValue([]);
+  mockGetTiktokPostsToday.mockResolvedValue([
+    {
+      video_id: '99887766',
+      share_url: 'https://www.tiktok.com/@akunasli/video/11223344?is_from_webapp=1',
+      created_at: '2024-01-01T08:00:00+07:00',
+    },
+  ]);
+  mockGetCommentsByVideoId.mockResolvedValue({ comments: [] });
+
+  const { text } = await generateSosmedTaskMessage('CLIENT', {
+    skipLikesFetch: true,
+    skipTiktokFetch: true,
+  });
+
+  expect(text).toContain('https://www.tiktok.com/@akunasli/video/99887766');
+  expect(text).not.toContain('@jatimreporter/video/99887766');
+});
+
+test('generateSosmedTaskMessage keeps TikTok post handle from post data', async () => {
+  mockFindClientById.mockResolvedValue({ nama: 'Unit', client_tiktok: '@jatimreporter' });
+  mockGetShortcodesTodayByClient.mockResolvedValue([]);
+  mockGetInstaPostsTodayByClient.mockResolvedValue([]);
+  mockGetTiktokPostsToday.mockResolvedValue([
+    { video_id: 'cross-1', username: 'akunlain', created_at: '2024-01-01T08:00:00+07:00' },
+  ]);
+  mockGetCommentsByVideoId.mockResolvedValue({ comments: [] });
+
+  const { text } = await generateSosmedTaskMessage('CLIENT', {
+    skipLikesFetch: true,
+    skipTiktokFetch: true,
+  });
+
+  expect(text).toContain('https://www.tiktok.com/@akunlain/video/cross-1');
+  expect(text).not.toContain('@jatimreporter/video/cross-1');
 });
 
 test('generateSosmedTaskMessage labels new content against previous state', async () => {
@@ -182,8 +224,8 @@ test('generateSosmedTaskMessage labels new content against previous state', asyn
 
   expect(text).toContain('1. https://www.instagram.com/p/alpha');
   expect(text).toContain('2. [BARU] https://www.instagram.com/p/beta');
-  expect(text).toContain('1. https://www.tiktok.com/@operator/video/111');
-  expect(text).toContain('2. [BARU] https://www.tiktok.com/@operator/video/222');
+  expect(text).toContain('1. https://www.tiktok.com/video/111');
+  expect(text).toContain('2. [BARU] https://www.tiktok.com/video/222');
 });
 
 test('generateSosmedTaskMessage prefers audit data and labels window when provided', async () => {

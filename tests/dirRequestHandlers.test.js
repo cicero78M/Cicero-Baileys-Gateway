@@ -815,7 +815,7 @@ describe('formatRekapAllSosmed', () => {
     expect(linkLines).toEqual([
       '- IG 1. https://www.instagram.com/p/alpha',
       '- IG 2. https://www.instagram.com/p/beta',
-      '- TikTok 1. https://www.tiktok.com/@ditbinmas/video/vid-1',
+      '- TikTok 1. https://www.tiktok.com/video/vid-1',
     ]);
     expect(message).toContain('1. 📸 *Instagram*');
     expect(message).toContain('2. 🎵 *TikTok*');
@@ -824,6 +824,51 @@ describe('formatRekapAllSosmed', () => {
     expect(message).toContain('Bottom 5 Komentar:');
     expect(message).not.toContain('Mohon Ijin Komandan, rekap singkat komentar TikTok');
     expect(message).toContain('Target harian belum sepenuhnya terpenuhi; kolaborasi halus antar satker akan membantu menutup gap likes dan komentar.');
+  });
+
+
+
+  test('uses handle from TikTok narrative when post row only has video_id', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2025-08-27T16:06:00Z'));
+
+    mockFindClientById.mockResolvedValue({
+      client_type: 'direktorat',
+      client_tiktok: '@jatimreporter',
+      nama: 'Direktorat Binmas',
+    });
+    mockGetInstaPostsTodayByClient.mockResolvedValue([]);
+    mockGetTiktokPostsTodayByClient.mockResolvedValue([{ video_id: 'cross-account-2' }]);
+
+    const ttNarrative = `*Tugas TikTok*\n1. https://www.tiktok.com/@akunasli/video/cross-account-2 — 10 komentar`;
+    const message = await formatRekapAllSosmed('', ttNarrative, 'Direktorat Binmas', 'DITBINMAS');
+
+    expect(message).toContain(
+      '- TikTok 1. https://www.tiktok.com/@akunasli/video/cross-account-2'
+    );
+    expect(message).not.toContain('@jatimreporter/video/cross-account-2');
+  });
+
+  test('does not force client_tiktok handle for TikTok daily content links', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2025-08-27T16:06:00Z'));
+
+    mockFindClientById.mockResolvedValue({
+      client_type: 'direktorat',
+      client_tiktok: '@jatimreporter',
+      nama: 'Direktorat Binmas',
+    });
+    mockGetInstaPostsTodayByClient.mockResolvedValue([]);
+    mockGetTiktokPostsTodayByClient.mockResolvedValue([
+      { video_id: 'cross-account-1', username: 'akunlain' },
+    ]);
+
+    const message = await formatRekapAllSosmed('', '', 'Direktorat Binmas', 'DITBINMAS');
+
+    expect(message).toContain(
+      '- TikTok 1. https://www.tiktok.com/@akunlain/video/cross-account-1'
+    );
+    expect(message).not.toContain('@jatimreporter/video/cross-account-1');
   });
 
   test('falls back to ranking data when TikTok narrative header lacks entries', async () => {

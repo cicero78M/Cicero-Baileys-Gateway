@@ -106,6 +106,54 @@ function formatSnapshotWindowLabel(snapshotWindow) {
   return `Data rentang ${startLabel}–${endLabel} WIB`;
 }
 
+
+function resolveTiktokLinkFromPost(post) {
+  if (!post?.video_id) return null;
+
+  const rawLinkCandidates = [
+    post.url,
+    post.video_url,
+    post.share_url,
+    post.link,
+    post.content_url,
+    post.source_url,
+    post.permalink,
+  ];
+  const rawLink = rawLinkCandidates.find(
+    (candidate) => typeof candidate === "string" && candidate.trim()
+  );
+
+  const rawLinkHandleMatch = String(rawLink || "").match(
+    /tiktok\.com\/@([^/\s?#]+)\/video\//i
+  );
+  const rawLinkUsername = (rawLinkHandleMatch?.[1] || "")
+    .trim()
+    .replace(/^@/, "");
+  if (rawLinkUsername) {
+    return `https://www.tiktok.com/@${rawLinkUsername}/video/${post.video_id}`;
+  }
+
+  const usernameCandidates = [
+    post.username,
+    post.author_username,
+    post.content_username,
+    post.unique_id,
+  ];
+  const username = usernameCandidates.find(
+    (candidate) => typeof candidate === "string" && candidate.trim()
+  );
+  if (username) {
+    return `https://www.tiktok.com/@${username
+      .trim()
+      .replace(/^@/, "")}/video/${post.video_id}`;
+  }
+
+  if (rawLink) return rawLink.trim();
+
+  return `https://www.tiktok.com/video/${post.video_id}`;
+}
+
+
 async function fetchLikesWithAudit(shortcodes, snapshotWindow) {
   if (!Array.isArray(shortcodes) || shortcodes.length === 0) {
     return { likesList: [], auditUsed: false };
@@ -204,12 +252,9 @@ export async function generateSosmedTaskMessage(
     : [];
 
   let clientName = clientId;
-  let tiktokUsername = "";
-
   try {
     const client = await findClientById(clientId);
     clientName = (client?.nama || clientId).toUpperCase();
-    tiktokUsername = (client?.client_tiktok || "").replace(/^@/, "");
   } catch {
     // ignore errors, use defaults
   }
@@ -279,9 +324,7 @@ export async function generateSosmedTaskMessage(
     const comments = commentResults[idx] || [];
     const count = Array.isArray(comments) ? comments.length : 0;
     totalComments += count;
-    const link = tiktokUsername
-      ? `https://www.tiktok.com/@${tiktokUsername}/video/${post.video_id}`
-      : `https://www.tiktok.com/video/${post.video_id}`;
+    const link = resolveTiktokLinkFromPost(post);
     const uploadTime = formatUploadTime(post?.created_at);
     const uploadLabel = uploadTime
       ? `(upload ${uploadTime} WIB)`
