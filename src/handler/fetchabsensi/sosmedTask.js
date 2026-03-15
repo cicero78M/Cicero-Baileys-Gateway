@@ -123,6 +123,8 @@ function resolveTiktokLinkFromPost(post) {
     (candidate) => typeof candidate === "string" && candidate.trim()
   );
 
+  const canonicalFallbackLink = `https://www.tiktok.com/@username/video/${post.video_id}`;
+
   const rawLinkHandleMatch = String(rawLink || "").match(
     /tiktok\.com\/@([^/\s?#]+)\/video\//i
   );
@@ -148,9 +150,15 @@ function resolveTiktokLinkFromPost(post) {
       .replace(/^@/, "")}/video/${post.video_id}`;
   }
 
-  if (rawLink) return rawLink.trim();
+  if (rawLink) {
+    const trimmedRawLink = rawLink.trim();
+    if (/tiktok\.com\/video\/\d{8,21}/i.test(trimmedRawLink)) {
+      return canonicalFallbackLink;
+    }
+    return trimmedRawLink;
+  }
 
-  return `https://www.tiktok.com/video/${post.video_id}`;
+  return canonicalFallbackLink;
 }
 
 
