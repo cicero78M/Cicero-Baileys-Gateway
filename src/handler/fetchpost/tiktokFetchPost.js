@@ -26,7 +26,7 @@ function extractVideoIdFromTikTokUrl(rawUrl) {
   if (!rawUrl) return "";
   try {
     const parsed = new URL(rawUrl);
-    const pathMatch = parsed.pathname.match(/\/video\/(\d{8,21})/i);
+    const pathMatch = parsed.pathname.match(/\/(?:video|photo)\/(\d{8,21})/i);
     if (pathMatch?.[1]) {
       return pathMatch[1];
     }
@@ -161,7 +161,7 @@ export async function fetchAndStoreSingleTiktokPost(clientId, videoInput) {
   const videoId = await resolveTikTokVideoId(videoInput);
   if (!videoId) {
     throw new Error(
-      "Format link, shortlink, atau video ID TikTok tidak dikenali. Pastikan link valid atau berisi /video/<ID>."
+      "Format link, shortlink, atau video ID TikTok tidak dikenali. Pastikan link valid atau berisi /video/<ID> atau /photo/<ID>."
     );
   }
 
