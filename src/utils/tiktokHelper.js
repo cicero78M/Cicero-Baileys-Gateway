@@ -1,7 +1,7 @@
 // src/utils/tiktokHelper.js
 
 const VIDEO_ID_PATTERNS = [
-  /video\/(\d{8,21})/i,
+  /(?:video|photo)\/(\d{8,21})/i,
   /[?&](?:video_id|videoId|item_id|itemId)=(\d{8,21})/,
   /share_video_id=(\d{8,21})/,
   /(?:^|\b)(\d{8,21})(?:\b|$)/,
@@ -24,7 +24,7 @@ export function extractVideoId(input) {
 
   try {
     const url = new URL(raw);
-    const direct = url.pathname.match(/video\/(\d{8,21})/i);
+    const direct = url.pathname.match(/(?:video|photo)\/(\d{8,21})/i);
     if (direct?.[1]) return direct[1];
     const params = url.searchParams;
     const keys = ["video_id", "videoId", "item_id", "itemId", "share_video_id"];
