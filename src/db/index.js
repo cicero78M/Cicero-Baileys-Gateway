@@ -68,12 +68,40 @@ export const withTransaction = async (callback, { sessionSettings } = {}) => {
   }
 
   const client = await adapter.getClient();
+  let transactionFailure = null;
+  const transactionalClient = new Proxy(client, {
+    get(target, prop, receiver) {
+      if (prop === 'query') {
+        return async (...args) => {
+          if (transactionFailure) {
+            const err = new Error(
+              'Transaction already failed. Stop executing additional queries and rethrow the original error.',
+            );
+            err.code = 'TX_ABORTED';
+            err.cause = transactionFailure;
+            throw err;
+          }
+          try {
+            return await target.query(...args);
+          } catch (err) {
+            transactionFailure = err;
+            throw err;
+          }
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+
   try {
     await client.query('BEGIN');
     if (sessionSettings) {
-      await applySessionSettings(client, sessionSettings);
+      await applySessionSettings(transactionalClient, sessionSettings);
     }
-    const result = await callback(client);
+    const result = await callback(transactionalClient);
+    if (transactionFailure) {
+      throw transactionFailure;
+    }
     await client.query('COMMIT');
     return result;
   } catch (err) {
