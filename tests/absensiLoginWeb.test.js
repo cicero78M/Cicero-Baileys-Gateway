@@ -14,23 +14,24 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-test('builds recap message with dashboard and penmas users', async () => {
+test('builds recap message with dashboard users', async () => {
   const startTime = new Date('2025-05-05T00:00:00Z');
   const endTime = new Date('2025-05-11T23:59:59.999Z');
 
   mockGetWebLoginCountsByActor.mockResolvedValue([
     { actor_id: 'dash-1', login_count: '2' },
-    { actor_id: 'pen-1', login_count: '1' },
+    { actor_id: 'dash-2', login_count: '1' },
   ]);
 
   mockQuery.mockImplementation((sql, params) => {
     if (sql.includes('FROM dashboard_user')) {
-      expect(params[0]).toEqual(['dash-1', 'pen-1']);
-      return { rows: [{ actor_id: 'dash-1', username: 'alice', role: 'admin' }] };
-    }
-    if (sql.includes('FROM penmas_user')) {
-      expect(params[0]).toEqual(['dash-1', 'pen-1']);
-      return { rows: [{ actor_id: 'pen-1', username: 'budi', role: 'operator' }] };
+      expect(params[0]).toEqual(['dash-1', 'dash-2']);
+      return {
+        rows: [
+          { actor_id: 'dash-1', username: 'alice', role: 'admin' },
+          { actor_id: 'dash-2', username: 'budi', role: 'operator' },
+        ],
+      };
     }
     return { rows: [] };
   });
@@ -45,7 +46,7 @@ test('builds recap message with dashboard and penmas users', async () => {
   expect(message).toContain(`Periode: ${startLabel} - ${endLabel}`);
   expect(message).toContain('Total hadir: 2 user (3 login)');
   expect(message).toMatch(/1\. alice \(dashboard - ADMIN\) — 2 kali/);
-  expect(message).toMatch(/2\. budi \(penmas - OPERATOR\) — 1 kali/);
+  expect(message).toMatch(/2\. budi \(dashboard - OPERATOR\) — 1 kali/);
 });
 
 test('builds monthly recap grouped by polres', async () => {

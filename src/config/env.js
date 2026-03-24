@@ -32,7 +32,6 @@ export const env = cleanEnv(process.env, {
   WA_WWEBJS_PROTOCOL_TIMEOUT_MS: num({ default: 120000 }),
   ENABLE_DIRREQUEST_GROUP: bool({ default: true }),
   DEBUG_FETCH_INSTAGRAM: bool({ default: false }),
-  AMQP_URL: str({ default: 'amqp://localhost' }),
   BACKUP_DIR: str({ default: 'backups' }),
   GOOGLE_DRIVE_FOLDER_ID: str({ default: '' }),
   GOOGLE_SERVICE_ACCOUNT: str({ default: '' }),

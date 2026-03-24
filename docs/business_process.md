@@ -29,8 +29,9 @@ This document summarizes the high level business processes of the Cicero platfor
 
 ## 5. Queue Processing
 
-1. For heavy workloads, Cicero_V2 can publish tasks to RabbitMQ queues.
-2. Worker processes consume the queues and update the database asynchronously, keeping the dashboard responsive.
+1. Outbound WhatsApp messages are queued via `src/service/waOutbox.js` (BullMQ, backed by Redis).
+2. The outbox applies rate limiting (40 messages per minute) and retries failed sends up to 5 times with exponential backoff.
+3. All other heavy tasks remain synchronous or use in-process `p-queue` throttling; BullMQ can be extended for additional job types as needed.
 
 ## 6. Overall Flow
 

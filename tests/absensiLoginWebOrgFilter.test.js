@@ -38,10 +38,6 @@ test('daily recap ignores directorate client actors', async () => {
       expect(params).toEqual([['org-actor']]);
       return { rows: [{ actor_id: 'org-actor', username: 'dina', role: 'operator' }] };
     }
-    if (sql.includes('FROM penmas_user')) {
-      expect(params).toEqual([['org-actor']]);
-      return { rows: [] };
-    }
     return { rows: [] };
   });
 
@@ -78,10 +74,6 @@ test('weekly recap ignores directorate client actors', async () => {
     if (sql.includes('FROM dashboard_user')) {
       expect(params).toEqual([['org-weekly']]);
       return { rows: [{ actor_id: 'org-weekly', username: 'rudi', role: 'supervisor' }] };
-    }
-    if (sql.includes('FROM penmas_user')) {
-      expect(params).toEqual([['org-weekly']]);
-      return { rows: [] };
     }
     return { rows: [] };
   });

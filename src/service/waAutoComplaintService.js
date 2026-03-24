@@ -1,4 +1,3 @@
-import { clientRequestHandlers } from '../handler/menu/clientRequestHandlers.js';
 import { parseComplaintMessage } from './complaintParser.js';
 import { triageComplaint } from './complaintTriageService.js';
 import { fetchSocialProfile } from './rapidApiProfileService.js';
@@ -105,53 +104,6 @@ async function sendComplaintMessages(waClient, { chatId, senderId, triage }) {
   await waClient.sendMessage(requesterRecipient, triage.adminSummary);
 }
 
-function shouldUseLegacyComplaintFlow({ waClient }) {
-  if (String(process.env.WA_COMPLAINT_USE_LEGACY_FLOW || '').toLowerCase() === 'true') {
-    return true;
-  }
-  return typeof waClient?.sendMessage !== 'function';
-}
-
-async function handleWithLegacyResponder({
-  chatId,
-  text,
-  adminOptionSessions,
-  setSession,
-  getSession,
-  waClient,
-  pool,
-  userModel,
-}) {
-  const adminSession = adminOptionSessions?.[chatId];
-  if (adminSession?.timeout) {
-    clearTimeout(adminSession.timeout);
-  }
-  if (adminOptionSessions) {
-    delete adminOptionSessions[chatId];
-  }
-
-  if (typeof setSession !== 'function' || typeof getSession !== 'function') {
-    return false;
-  }
-
-  setSession(chatId, {
-    menu: 'clientrequest',
-    step: 'respondComplaint_message',
-    respondComplaint: {},
-  });
-
-  const updatedSession = getSession(chatId);
-  await clientRequestHandlers.respondComplaint_message(
-    updatedSession,
-    chatId,
-    text,
-    waClient,
-    pool,
-    userModel
-  );
-  return true;
-}
-
 export async function handleComplaintMessageIfApplicable({
   text,
   allowUserMenu,
@@ -159,31 +111,11 @@ export async function handleComplaintMessageIfApplicable({
   senderId,
   gatewayIds,
   chatId,
-  adminOptionSessions,
-  setSession,
-  getSession,
   waClient,
   pool,
-  userModel,
 }) {
   if (!shouldHandleComplaintMessage({ text, allowUserMenu, session, senderId, gatewayIds, chatId })) {
     return false;
-  }
-
-  if (
-    shouldUseLegacyComplaintFlow({ waClient }) &&
-    (typeof setSession === 'function' || typeof getSession === 'function')
-  ) {
-    return handleWithLegacyResponder({
-      chatId,
-      text,
-      adminOptionSessions,
-      setSession,
-      getSession,
-      waClient,
-      pool,
-      userModel,
-    });
   }
 
   const parsed = parseComplaintMessage(text);

@@ -1,0 +1,44 @@
+node_modules/
+npm-debug.log*
+.env
+.env.*
+!.env.example
+
+# WA session credentials – mounted as Docker volume
+auth_info_baileys/
+auth_info_wwebjs/
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Log and temp files
+logs/
+laphar/
+uploads/
+backups/
+*.log
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.zip
+
+# Dev and test artefacts
+coverage/
+.nyc_output/
+tests/
+specs/
+.specify/
+docs/
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Build tools
+.eslintcache

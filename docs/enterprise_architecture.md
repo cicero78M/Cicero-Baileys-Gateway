@@ -8,7 +8,7 @@ This document provides a high level overview of the architecture behind Cicero W
 - **Frontend**: Next.js application located in `cicero-dashboard` (see the [Cicero Web repository](https://github.com/cicero78M/Cicero_Web)).
 - **Backend**: Node.js/Express REST API located in this repository.
 - **Database**: PostgreSQL (with optional support for MySQL or SQLite via the database adapter).
-- **Queue**: RabbitMQ for high‑volume asynchronous jobs.
+- **Queue**: BullMQ (backed by Redis) for WhatsApp outbox and asynchronous job processing.
 - **Cache/Session**: Redis for caching and session storage.
 - **Messaging**: Dual WhatsApp sessions powered by `whatsapp-web.js` (operator-facing `waClient` and broadcast-oriented `waGatewayClient`).
 - **External APIs**: Instagram and TikTok data fetched through RapidAPI.
@@ -21,7 +21,7 @@ The backend exposes REST endpoints to manage clients, users, and social media an
 
 - `app.js` – Express entry point registering middleware, routes, and scheduled cron buckets based on WhatsApp readiness.
 - `src/controller` – Controller layer for clients, users, OAuth callbacks, dashboard metrics, editorial events, aggregator feeds, premium flows, and social media endpoints.
-- `src/service` – Cron helpers, API wrappers, WhatsApp helpers, OTP/email delivery, Google contact sync, RabbitMQ queues, and various utility functions.
+- `src/service` – Cron helpers, API wrappers, WhatsApp helpers, OTP/email delivery, Google contact sync, BullMQ outbox queue (`waOutbox.js`), and various utility functions.
 - `src/handler` – WhatsApp menu logic, link amplification processors, and fetch helpers for automation.
 - `src/routes` – API routes for auth, clients, users, Instagram/TikTok, logs, metadata, dashboards, aggregator widgets, Penmas editorial workflows, OTP claim flows, premium requests, and link amplification.
 - `src/middleware` – Authentication (JWT, dashboard, Penmas), request deduplication, debugging, and global error handling.
@@ -55,15 +55,15 @@ Located in the separate `Cicero_Web/cicero-dashboard` directory. The dashboard c
    - Penmas editorial events trigger approval requests that notify administrators through WhatsApp commands handled by `waService.js`.
 
 4. **Queue Processing**
-- High‑volume tasks can be published to RabbitMQ using `src/service/rabbitMQService.js` for asynchronous processing.
-- OTP emails are dispatched synchronously through `src/service/otpQueue.js` → `src/service/emailService.js`, eliminating the earlier background worker delay.
+- Outbound WhatsApp messages are queued through `src/service/waOutbox.js` (BullMQ backed by Redis) with rate limiting (40 msg/min) and exponential-backoff retry (5 attempts).
+- OTP emails are dispatched synchronously through `src/service/otpQueue.js` → `src/service/emailService.js`, eliminating any background worker delay.
 
 ## Deployment Considerations
 
 - Both frontend and backend are Node.js applications and can run on the same host or separately.
 - Environment variables are managed via `.env` files (`.env` for backend, `.env.local` for frontend).
 - Use PM2 for clustering and process management in production.
-- Monitor PostgreSQL, Redis, and RabbitMQ health for reliability.
+- Monitor PostgreSQL and Redis health for reliability.
 
 ## Diagram
 
@@ -80,7 +80,7 @@ Below is a conceptual diagram of the main components and their interactions:
 |  Backend    | <--------------> |  PostgreSQL DB |
 |  (Node.js)  |                  +----------------+
 +-------------+
-     |  ^            Redis & RabbitMQ            ^
+     |  ^                  Redis                 ^
      |  |--------------------------------------- |
      |        External Services (Instagram, TikTok, WhatsApp, SMTP, Google People API)
      |             via RapidAPI, whatsapp-web.js, Nodemailer, Google SDK

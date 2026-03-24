@@ -20,73 +20,7 @@ import {
 } from "../utils/waDiagnostics.js";
 
 // Service & Utility Imports
-import * as clientService from "./clientService.js";
 import * as userModel from "../model/userModel.js";
-import * as satbinmasOfficialAccountService from "./satbinmasOfficialAccountService.js";
-import { findByOperator, findBySuperAdmin } from "../model/clientModel.js";
-import * as premiumService from "./premiumService.js";
-import * as premiumReqModel from "../model/premiumRequestModel.js";
-import { migrateUsersFromFolder } from "./userMigrationService.js";
-import { checkGoogleSheetCsvStatus } from "./checkGoogleSheetAccess.js";
-import { importUsersFromGoogleSheet } from "./importUsersFromGoogleSheet.js";
-import { fetchAndStoreInstaContent } from "../handler/fetchpost/instaFetchPost.js";
-import { handleFetchLikesInstagram } from "../handler/fetchengagement/fetchLikesInstagram.js";
-import {
-  getTiktokSecUid,
-  fetchAndStoreTiktokContent,
-} from "../handler/fetchpost/tiktokFetchPost.js";
-import { fetchInstagramProfile } from "./instagramApi.js";
-import { fetchTiktokProfile } from "./tiktokRapidService.js";
-import {
-  saveContactIfNew,
-  authorize,
-  searchByNumbers,
-  saveGoogleContact,
-} from "./googleContactsService.js";
-
-import {
-  absensiLikes,
-  absensiLikesPerKonten,
-} from "../handler/fetchabsensi/insta/absensiLikesInsta.js";
-
-import {
-  absensiKomentar,
-  absensiKomentarTiktokPerKonten,
-} from "../handler/fetchabsensi/tiktok/absensiKomentarTiktok.js";
-
-// Model Imports
-import { getLikesByShortcode } from "../model/instaLikeModel.js";
-import { getShortcodesTodayByClient } from "../model/instaPostModel.js";
-import { getUsersByClient } from "../model/userModel.js";
-
-// Handler Imports
-import {
-  BULK_STATUS_HEADER_REGEX,
-  processBulkDeletionRequest,
-} from "../handler/wa/bulkDeletionHandler.js";
-
-import { handleFetchKomentarTiktokBatch } from "../handler/fetchengagement/fetchCommentTiktok.js";
-
-// >>> HANYA SATU INI <<< (Pastikan di helper semua diekspor)
-import {
-  userMenuContext,
-  updateUsernameSession,
-  userRequestLinkSessions,
-  waBindSessions,
-  operatorOptionSessions,
-  adminOptionSessions,
-  setSession,
-  getSession,
-} from "../utils/sessionsHelper.js";
-
-import {
-  formatNama,
-  groupByDivision,
-  sortDivisionKeys,
-  normalizeKomentarArr,
-  getGreeting,
-  formatUserData,
-} from "../utils/utilsHelper.js";
 import {
   handleComplaintMessageIfApplicable,
 } from "./waAutoComplaintService.js";
@@ -94,19 +28,10 @@ import { handleAutoSosmedTaskMessageIfApplicable } from "./waAutoSosmedTaskServi
 import {
   isAdminWhatsApp,
   formatToWhatsAppId,
-  formatClientData,
   safeSendMessage,
   getAdminWAIds,
-  isUnsupportedVersionError,
   sendWAReport,
-  sendWithClientFallback,
-  hasSameClientIdAsAdmin,
 } from "../utils/waHelper.js";
-import {
-  IG_PROFILE_REGEX,
-  TT_PROFILE_REGEX,
-  adminCommands,
-} from "../utils/constants.js";
 
 dotenv.config();
 
@@ -206,224 +131,6 @@ function registerClientMessageHandler(client, fromAdapter, handler) {
     return;
   }
   clientMessageHandlers.set(client, { fromAdapter, handler });
-}
-
-// Helper ringkas untuk menampilkan data user
-function formatUserSummary(user) {
-  const polresName = user.client_name || user.client_id || "-";
-  return (
-    "👤 *Identitas Anda*\n" +
-    `*Nama Polres*: ${polresName}\n` +
-    `*Nama*     : ${user.nama || "-"}\n` +
-    `*Pangkat*  : ${user.title || "-"}\n` +
-    `*NRP/NIP*  : ${user.user_id || "-"}\n` +
-    `*Satfung*  : ${user.divisi || "-"}\n` +
-    `*Jabatan*  : ${user.jabatan || "-"}\n` +
-    (user.ditbinmas ? `*Desa Binaan* : ${user.desa || "-"}\n` : "") +
-    `*Instagram*: ${user.insta ? "@" + user.insta.replace(/^@/, "") : "-"}\n` +
-    `*TikTok*   : ${user.tiktok || "-"}\n` +
-    `*Status*   : ${
-      user.status === true || user.status === "true" ? "🟢 AKTIF" : "🔴 NONAKTIF"
-    }`
-  ).trim();
-}
-
-const numberFormatter = new Intl.NumberFormat("id-ID");
-
-function formatCount(value) {
-  return numberFormatter.format(Math.max(0, Math.floor(Number(value) || 0)));
-}
-
-function formatCurrencyId(value) {
-  if (value === null || value === undefined) return "-";
-  const numeric = Number(value);
-  if (Number.isNaN(numeric)) return String(value);
-  return `Rp ${numberFormatter.format(numeric)}`;
-}
-
-function formatDateTimeId(value) {
-  if (!value) return "-";
-  try {
-    return new Intl.DateTimeFormat("id-ID", {
-      dateStyle: "medium",
-      timeStyle: "short",
-      timeZone: "Asia/Jakarta",
-    }).format(new Date(value));
-  } catch (err) {
-    return String(value);
-  }
-}
-
-function normalizeInstagramUsername(value) {
-  if (!value) return null;
-  const normalized = String(value).trim().replace(/^@+/, "").toLowerCase();
-  return normalized && /^[a-z0-9._]{1,30}$/.test(normalized) ? normalized : null;
-}
-
-function normalizeTiktokUsername(value) {
-  if (!value) return null;
-  const normalized = String(value).trim().replace(/^@+/, "").toLowerCase();
-  return normalized && /^[a-z0-9._]{1,24}$/.test(normalized) ? normalized : null;
-}
-
-function formatSocialUsername(platform, username) {
-  const normalized =
-    platform === "instagram"
-      ? normalizeInstagramUsername(username)
-      : normalizeTiktokUsername(username);
-  return normalized ? `@${normalized}` : "-";
-}
-
-function extractProfileUsername(text) {
-  if (!text) return null;
-  const trimmed = text.trim();
-  let match = trimmed.match(IG_PROFILE_REGEX);
-  if (match) {
-    const username = normalizeInstagramUsername(match[2]);
-    if (!username) return null;
-    return {
-      platform: "instagram",
-      normalized: username,
-      storeValue: username,
-      display: formatSocialUsername("instagram", username),
-    };
-  }
-  match = trimmed.match(TT_PROFILE_REGEX);
-  if (match) {
-    const username = normalizeTiktokUsername(match[2]);
-    if (!username) return null;
-    return {
-      platform: "tiktok",
-      normalized: username,
-      storeValue: `@${username}`,
-      display: formatSocialUsername("tiktok", username),
-    };
-  }
-  return null;
-}
-
-const QUICK_REPLY_STEPS = new Set([
-  "inputUserId",
-  "confirmBindUser",
-  "confirmBindUpdate",
-  "updateAskField",
-  "updateAskValue",
-]);
-
-function shouldExpectQuickReply(session) {
-  if (!session || session.exit) {
-    return false;
-  }
-  return session.step ? QUICK_REPLY_STEPS.has(session.step) : false;
-}
-
-function toNumeric(value) {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const cleaned = value.replace(/[^0-9.-]/g, "");
-    const num = Number(cleaned);
-    if (Number.isFinite(num)) return num;
-  }
-  return 0;
-}
-
-function getPlatformLabel(platform) {
-  return platform === "instagram" ? "Instagram" : "TikTok";
-}
-
-async function verifyInstagramAccount(username) {
-  try {
-    const profile = await fetchInstagramProfile(username);
-    if (!profile) {
-      return { active: false };
-    }
-    const followerCount = toNumeric(
-      profile.followers_count ??
-        profile.follower_count ??
-        profile.followers ??
-        profile.followersCount ??
-        profile.edge_followed_by?.count
-    );
-    const followingCount = toNumeric(
-      profile.following_count ??
-        profile.following ??
-        profile.followingCount ??
-        profile.edge_follow?.count
-    );
-    const postCount = toNumeric(
-      profile.media_count ??
-        profile.posts_count ??
-        profile.post_count ??
-        profile.edge_owner_to_timeline_media?.count
-    );
-    const active = followerCount > 0 && followingCount > 0 && postCount > 0;
-    return { active, followerCount, followingCount, postCount, profile };
-  } catch (error) {
-    return { active: false, error };
-  }
-}
-
-async function verifyTiktokAccount(username) {
-  try {
-    const profile = await fetchTiktokProfile(username);
-    if (!profile) {
-      return { active: false };
-    }
-    const followerCount = toNumeric(
-      profile.follower_count ??
-        profile.followerCount ??
-        profile.stats?.followerCount
-    );
-    const followingCount = toNumeric(
-      profile.following_count ??
-        profile.followingCount ??
-        profile.stats?.followingCount
-    );
-    const postCount = toNumeric(
-      profile.video_count ??
-        profile.videoCount ??
-        profile.stats?.videoCount
-    );
-    const active = followerCount > 0 && followingCount > 0 && postCount > 0;
-    return { active, followerCount, followingCount, postCount, profile };
-  } catch (error) {
-    return { active: false, error };
-  }
-}
-
-async function verifySocialAccount(platform, username) {
-  if (!username) return { active: false };
-  if (platform === "instagram") {
-    return verifyInstagramAccount(username);
-  }
-  return verifyTiktokAccount(username);
-}
-
-function formatVerificationSummary(
-  context,
-  platform,
-  displayUsername,
-  verification
-) {
-  if (!displayUsername) {
-    return `• ${context}: belum ada username ${getPlatformLabel(platform)} yang tersimpan.`;
-  }
-  if (!verification) {
-    return `• ${context}: ${displayUsername} → belum diperiksa.`;
-  }
-  if (verification.error) {
-    const reason = verification.error?.message || String(verification.error);
-    return `• ${context}: ${displayUsername} → gagal diperiksa (${reason}).`;
-  }
-  if (!verification.active) {
-    return `• ${context}: ${displayUsername} → belum terbaca aktif.`;
-  }
-  return (
-    `• ${context}: ${displayUsername} → aktif ` +
-    `(Postingan: ${formatCount(verification.postCount)}, ` +
-    `Follower: ${formatCount(verification.followerCount)}, ` +
-    `Following: ${formatCount(verification.followingCount)})`
-  );
 }
 
 // =======================
@@ -1160,31 +867,18 @@ waClient.on("change_state", (state) => {
 // MESSAGE HANDLER UTAMA
 // =======================
 export function createHandleMessage(waClient, options = {}) {
-  const { allowUserMenu = true, clientLabel = "[WA]", markSeen = true } = options;
+  const { clientLabel = "[WA]", markSeen = true } = options;
 
   return async function handleMessage(msg) {
     const chatId = msg.from;
     const text = (msg.body || "").trim();
-    const userWaNum = chatId.replace(/[^0-9]/g, "");
-    const initialIsMyContact =
-      typeof msg.isMyContact === "boolean" ? msg.isMyContact : null;
-    const isGroupChat = chatId?.endsWith("@g.us");
-    const senderId = msg.author || chatId;
-    const isAdmin = isAdminWhatsApp(senderId);
-    const normalizedSenderAdminId =
-      typeof senderId === "string"
-        ? senderId.endsWith("@c.us")
-          ? senderId
-          : senderId.replace(/\D/g, "") + "@c.us"
-        : "";
-    const adminWaId = isAdmin
-      ? getAdminWAIds().find((wid) => wid === normalizedSenderAdminId) || null
-      : null;
-    console.log(`${clientLabel} Incoming message from ${chatId}: ${text}`);
+    if (!text) return;
     if (msg.isStatus || chatId === "status@broadcast") {
-      console.log(`${clientLabel} Ignored status message from ${chatId}`);
       return;
     }
+
+    console.log(`${clientLabel} Incoming message from ${chatId}: ${text}`);
+
     const waitForReady =
       typeof waClient.waitForWaReady === "function"
         ? waClient.waitForWaReady
@@ -1201,11 +895,7 @@ export function createHandleMessage(waClient, options = {}) {
       readinessState.pendingMessages.push({ msg, allowReplay: true });
       waClient
         .sendMessage(msg.from, "🤖 Bot sedang memuat, silakan tunggu")
-        .catch(() => {
-          console.warn(
-            `${clientLabel} Failed to notify ${msg.from} about loading state`
-          );
-        });
+        .catch(() => {});
       return;
     }
 
@@ -1220,269 +910,27 @@ export function createHandleMessage(waClient, options = {}) {
       }
     }
 
-    // ===== Deklarasi State dan Konstanta =====
-    let session = getSession(chatId);
+    const handledComplaint = await handleComplaintMessageIfApplicable({
+      text,
+      allowUserMenu: false,
+      session: null,
+      senderId: msg.author || chatId,
+      chatId,
+      waClient,
+      pool,
+    });
+    if (handledComplaint) return;
 
-    if (isGroupChat) {
-      const handledGroupComplaint = await handleComplaintMessageIfApplicable({
-        text,
-        allowUserMenu,
-        session,
-        isAdmin,
-        initialIsMyContact,
-        senderId,
-        chatId,
-        adminOptionSessions,
-        setSession,
-        getSession,
-        waClient,
-        pool,
-        userModel,
-      });
-      if (handledGroupComplaint) {
-        return;
-      }
+    const handledTaskBroadcast = await handleAutoSosmedTaskMessageIfApplicable({
+      text,
+      chatId,
+      session: null,
+      waClient,
+    });
+    if (handledTaskBroadcast) return;
 
-      const handledGroupTaskBroadcast = await handleAutoSosmedTaskMessageIfApplicable({
-        text,
-        chatId,
-        session,
-        waClient,
-      });
-      if (handledGroupTaskBroadcast) {
-        return;
-      }
-
-      console.log(`${clientLabel} Ignored group message from ${chatId}`);
-      return;
-    }
-
-    const hasAnySession = () =>
-      Boolean(getSession(chatId)) ||
-      Boolean(userMenuContext[chatId]) ||
-      Boolean(waBindSessions[chatId]) ||
-      Boolean(updateUsernameSession[chatId]) ||
-      Boolean(userRequestLinkSessions[chatId]) ||
-      Boolean(operatorOptionSessions[chatId]) ||
-      Boolean(adminOptionSessions[chatId]);
-    const hadSessionAtStart = allowUserMenu ? hasAnySession() : false;
-    let mutualReminderComputed = false;
-    let mutualReminderResult = {
-      shouldRemind: false,
-      message: null,
-      savedInDb: false,
-      savedInWhatsapp: false,
-      user: null,
-    };
-    // Save contact for non-group chats
-    if (!chatId.endsWith("@g.us")) {
-      await saveContactIfNew(chatId);
-    }
-
-    let cachedUserByWa = null;
-    let userByWaError = null;
-    let userByWaFetched = false;
-
-    const getUserByWa = async () => {
-      if (userByWaFetched) {
-        return cachedUserByWa;
-      }
-      userByWaFetched = true;
-      if (!userWaNum) return null;
-      try {
-        cachedUserByWa = await userModel.findUserByWhatsApp(userWaNum);
-      } catch (err) {
-        userByWaError = err;
-        console.error(
-          `${clientLabel} failed to load user by WhatsApp ${userWaNum}: ${err.message}`
-        );
-      }
-      return cachedUserByWa;
-    };
-
-    const computeMutualReminder = async () => {
-      if (!allowUserMenu) {
-        mutualReminderComputed = true;
-        return mutualReminderResult;
-      }
-      if (mutualReminderComputed) {
-        return mutualReminderResult;
-      }
-
-      const result = {
-        shouldRemind: false,
-        message: null,
-        savedInDb: false,
-        savedInWhatsapp: false,
-        user: null,
-      };
-
-      let savedInDb = false;
-      if (userWaNum) {
-        try {
-          const lookup = await query(
-            "SELECT 1 FROM saved_contact WHERE phone_number = $1 LIMIT 1",
-            [userWaNum]
-          );
-          savedInDb = lookup.rowCount > 0;
-        } catch (err) {
-          console.error(
-            `${clientLabel} failed to check saved_contact for ${chatId}: ${err.message}`
-          );
-        }
-      }
-
-      const user = await getUserByWa();
-      result.user = user || null;
-
-      if (user && !savedInDb) {
-        try {
-          await saveContactIfNew(chatId);
-          savedInDb = true;
-        } catch (err) {
-          console.error(
-            `${clientLabel} failed to persist contact for ${chatId}: ${err.message}`
-          );
-        }
-      }
-
-      let savedInWhatsapp =
-        typeof initialIsMyContact === "boolean" ? initialIsMyContact : null;
-
-      const refreshContactState = async () => {
-        if (typeof waClient.getContact !== "function") {
-          return savedInWhatsapp;
-        }
-        try {
-          const contact = await waClient.getContact(chatId);
-          return contact?.isMyContact ?? savedInWhatsapp;
-        } catch (err) {
-          console.warn(
-            `${clientLabel} failed to refresh contact info for ${chatId}: ${err?.message || err}`
-          );
-          return savedInWhatsapp;
-        }
-      };
-
-      if (savedInWhatsapp === null) {
-        savedInWhatsapp = await refreshContactState();
-      }
-
-      if (user && savedInDb && savedInWhatsapp !== true) {
-        savedInWhatsapp = await refreshContactState();
-      }
-
-      const isMutual = Boolean(savedInWhatsapp) && savedInDb;
-
-      if (!isMutual) {
-        result.shouldRemind = true;
-        result.message =
-          "📌 Mohon simpan nomor ini sebagai *WA Center CICERO* agar pemberitahuan dan layanan dapat diterima tanpa hambatan.";
-      }
-
-      result.savedInDb = savedInDb;
-      result.savedInWhatsapp = Boolean(savedInWhatsapp);
-
-      mutualReminderResult = result;
-      mutualReminderComputed = true;
-      return mutualReminderResult;
-    };
-
-    const processMessage = async () => {
-      const normalizedText = text.trim().toLowerCase();
-      const session = getSession(chatId);
-
-      const handledComplaint = await handleComplaintMessageIfApplicable({
-        text,
-        allowUserMenu: false,
-        session,
-        isAdmin,
-        initialIsMyContact,
-        senderId,
-        chatId,
-        adminOptionSessions,
-        setSession,
-        getSession,
-        waClient,
-        pool,
-        userModel,
-      });
-      if (handledComplaint) {
-        return;
-      }
-
-      const handledTaskBroadcast = await handleAutoSosmedTaskMessageIfApplicable({
-        text,
-        chatId,
-        session,
-        waClient,
-      });
-      if (handledTaskBroadcast) {
-        return;
-      }
-
-      const isBulkSession =
-        session?.menu === "clientrequest" &&
-        ["bulkStatus_process", "bulkStatus_selectRole"].includes(session?.step);
-      if (BULK_STATUS_HEADER_REGEX.test(normalizedText) || isBulkSession) {
-        const bulkSession = getSession(chatId);
-        if (!bulkSession) {
-          setSession(chatId, { menu: "clientrequest", step: "bulkStatus_process" });
-        }
-        await processBulkDeletionRequest({
-          session: bulkSession || getSession(chatId),
-          chatId,
-          text,
-          waClient,
-          userModel,
-        });
-        return;
-      }
-
-      console.log(
-        `${clientLabel} Ignored non-relevant private message from ${chatId}`
-      );
-    };
-
-    try {
-      await processMessage();
-    } finally {
-      if (allowUserMenu) {
-        const reminder = await computeMutualReminder();
-        const hasSessionNow = hasAnySession();
-        if (
-          reminder.shouldRemind &&
-          reminder.message &&
-          hadSessionAtStart &&
-          !hasSessionNow
-        ) {
-          try {
-            await waClient.sendMessage(chatId, reminder.message);
-          } catch (err) {
-            console.warn(
-              `${clientLabel} failed to send mutual reminder to ${chatId}: ${err?.message || err}`
-            );
-          }
-        }
-      }
-    }
+    console.log(`${clientLabel} Ignored non-relevant message from ${chatId}`);
   };
-}
-
-async function processGatewayBulkDeletion(chatId, text) {
-  const existingSession = getSession(chatId);
-  const session =
-    existingSession?.menu === "clientrequest"
-      ? existingSession
-      : { menu: "clientrequest", step: "bulkStatus_process" };
-  setSession(chatId, session);
-  await processBulkDeletionRequest({
-    session: getSession(chatId),
-    chatId,
-    text,
-    waClient: waClient,
-    userModel,
-  });
 }
 
 const gatewayAllowedGroupIds = new Set();
@@ -1601,26 +1049,15 @@ export async function handleGatewayMessage(msg) {
   }
 
   const senderId = msg.author || chatId;
-  const normalizedText = text.trim().toLowerCase();
-  const isAdmin = isAdminWhatsApp(senderId);
-  const initialIsMyContact =
-    typeof msg.isMyContact === "boolean" ? msg.isMyContact : null;
-  const session = getSession(chatId);
 
   const handledComplaint = await handleComplaintMessageIfApplicable({
     text,
     allowUserMenu: false,
-    session,
-    isAdmin,
-    initialIsMyContact,
+    session: null,
     senderId,
     chatId,
-    adminOptionSessions,
-    setSession,
-    getSession,
     waClient: waClient,
     pool,
-    userModel,
   });
   if (handledComplaint) {
     return;
@@ -1629,24 +1066,14 @@ export async function handleGatewayMessage(msg) {
   const handledTaskBroadcast = await handleAutoSosmedTaskMessageIfApplicable({
     text,
     chatId,
-    session,
+    session: null,
     waClient,
   });
   if (handledTaskBroadcast) {
     return;
   }
 
-  const isBulkSession =
-    session?.menu === "clientrequest" &&
-    ["bulkStatus_process", "bulkStatus_selectRole"].includes(session?.step);
-  if (BULK_STATUS_HEADER_REGEX.test(normalizedText) || isBulkSession) {
-    await processGatewayBulkDeletion(chatId, text);
-    return;
-  }
-
-  console.log(
-    `[WA-GATEWAY] Ignored non-relevant message from ${chatId}`
-  );
+  console.log(`[WA-GATEWAY] Ignored non-relevant message from ${chatId}`);
 }
 
 registerClientMessageHandler(waClient, "wwebjs-gateway", handleGatewayMessage);
