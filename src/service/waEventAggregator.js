@@ -36,7 +36,7 @@ function evictOldestIfFull(key) {
 }
 
 // Periodic cleanup of expired entries to prevent memory leak
-function cleanupExpiredMessages() {
+export function cleanupExpiredMessages() {
   const now = Date.now();
   let removedCount = 0;
   

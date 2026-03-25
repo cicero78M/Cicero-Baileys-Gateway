@@ -1,5 +1,27 @@
 import { jest } from '@jest/globals';
-import { triageComplaint } from '../src/service/complaintTriageService.js';
+
+// Mock the repository so DB pool is never instantiated
+jest.unstable_mockModule('../src/repository/complaintRepository.js', () => ({
+  getUserByNrp: jest.fn(),
+  getAuditCounts: jest.fn(),
+  updateUserSocialHandle: jest.fn(),
+  getLatestPost: jest.fn(),
+}));
+
+let triageComplaint;
+let mockGetUserByNrp, mockGetAuditCounts;
+
+beforeAll(async () => {
+  const repo = await import('../src/repository/complaintRepository.js');
+  mockGetUserByNrp = repo.getUserByNrp;
+  mockGetAuditCounts = repo.getAuditCounts;
+  const svc = await import('../src/service/complaintTriageService.js');
+  triageComplaint = svc.triageComplaint;
+});
+
+beforeEach(() => {
+  jest.clearAllMocks();
+});
 
 function makeParsed(overrides = {}) {
   const { reporter: reporterOverride = {}, ...rest } = overrides || {};
@@ -17,32 +39,27 @@ function makeParsed(overrides = {}) {
   };
 }
 
-function makeDb(userRow, auditLike = 0, auditComment = 0, historicalLike = auditLike, historicalComment = auditComment) {
-  const query = jest.fn(async (sql, params = []) => {
-    if (sql.includes('FROM "user"')) {
-      return { rows: userRow ? [userRow] : [] };
-    }
-    if (sql.includes('FROM insta_like')) {
-      const total = params.length === 1 ? historicalLike : auditLike;
-      return { rows: [{ total }] };
-    }
-    if (sql.includes('FROM tiktok_comment')) {
-      const total = params.length === 1 ? historicalComment : auditComment;
-      return { rows: [{ total }] };
-    }
-    return { rows: [] };
+/**
+ * Helper: configure the mocked repository functions.
+ * auditLike/auditComment = recent counts; historicalLike/historicalComment = allTime counts.
+ */
+function setupRepoMocks(userRow, auditLike = 0, auditComment = 0, historicalLike = auditLike, historicalComment = auditComment) {
+  mockGetUserByNrp.mockResolvedValue(userRow || null);
+  mockGetAuditCounts.mockImplementation(async (username, platform) => {
+    if (platform === 'instagram') return { recentCount: auditLike, allTimeCount: historicalLike };
+    if (platform === 'tiktok') return { recentCount: auditComment, allTimeCount: historicalComment };
+    return { recentCount: 0, allTimeCount: 0 };
   });
-
-  return { query };
 }
+
+const baseUser = { user_id: '75020201', insta: '@tester', tiktok: '@tester', updated_at: new Date().toISOString() };
 
 describe('complaintTriageService', () => {
   test('returns USERNAME_MISMATCH when complaint username differs from DB', async () => {
     const parsed = makeParsed({ reporter: { igUsername: '@beda' } });
-    const db = makeDb({ user_id: '75020201', insta: '@tester', tiktok: '@tester', updated_at: new Date().toISOString() }, 1, 1);
+    setupRepoMocks(baseUser, 1, 1);
 
     const result = await triageComplaint(parsed, {
-      db,
       now: new Date('2026-02-01T10:00:00Z'),
       rapidApi: jest.fn(async () => ({ exists: true, isPrivate: false })),
     });
@@ -52,10 +69,9 @@ describe('complaintTriageService', () => {
 
   test('returns ACCOUNT_PRIVATE when RapidAPI marks account private', async () => {
     const parsed = makeParsed();
-    const db = makeDb({ user_id: '75020201', insta: '@tester', tiktok: '@tester', updated_at: new Date().toISOString() });
+    setupRepoMocks(baseUser);
 
     const result = await triageComplaint(parsed, {
-      db,
       now: new Date('2026-02-01T10:00:00Z'),
       rapidApi: jest.fn(async () => ({ exists: true, isPrivate: true })),
     });
@@ -63,39 +79,30 @@ describe('complaintTriageService', () => {
     expect(result.diagnosisCode).toBe('ACCOUNT_PRIVATE');
   });
 
-  test('returns LOW_TRUST when rapid profile has very low activity', async () => {
+  test('returns NO_CONTENT when rapid profile has zero posts', async () => {
     const parsed = makeParsed();
-    const db = makeDb({ user_id: '75020201', insta: '@tester', tiktok: '@tester', updated_at: new Date().toISOString() }, 1, 1);
+    setupRepoMocks(baseUser, 1, 1);
 
     const result = await triageComplaint(parsed, {
-      db,
       now: new Date('2026-02-01T10:00:00Z'),
       rapidApi: jest.fn(async () => ({
         exists: true,
         isPrivate: false,
         posts: 0,
-        hasProfilePic: false,
+        hasProfilePic: true,
         recentActivityScore: 3,
       })),
     });
 
-    expect(result.diagnosisCode).toBe('LOW_TRUST');
+    expect(result.diagnosisCode).toBe('NO_CONTENT');
+    expect(result.diagnoses).toEqual(expect.arrayContaining(['NO_CONTENT', 'LOW_TRUST']));
   });
-
-
 
   test('returns SYNC_PENDING when recent audit is empty but historical audit exists', async () => {
     const parsed = makeParsed();
-    const db = makeDb(
-      { user_id: '75020201', insta: '@tester', tiktok: '@tester', updated_at: new Date().toISOString() },
-      0,
-      0,
-      5,
-      3
-    );
+    setupRepoMocks(baseUser, 0, 0, 5, 3);
 
     const result = await triageComplaint(parsed, {
-      db,
       now: new Date('2026-02-01T10:00:00Z'),
       rapidApi: jest.fn(async () => ({ exists: true, isPrivate: false, posts: 20, hasProfilePic: true, recentActivityScore: 80 })),
     });
@@ -106,10 +113,9 @@ describe('complaintTriageService', () => {
 
   test('returns NOT_EXECUTED when both recent and historical audit are empty', async () => {
     const parsed = makeParsed();
-    const db = makeDb({ user_id: '75020201', insta: '@tester', tiktok: '@tester', updated_at: new Date().toISOString() }, 0, 0, 0, 0);
+    setupRepoMocks(baseUser, 0, 0, 0, 0);
 
     const result = await triageComplaint(parsed, {
-      db,
       now: new Date('2026-02-01T10:00:00Z'),
       rapidApi: jest.fn(async () => ({ exists: true, isPrivate: false })),
     });
@@ -120,13 +126,12 @@ describe('complaintTriageService', () => {
 
   test('handles RAPIDAPI_UNAVAILABLE with fallback guidance', async () => {
     const parsed = makeParsed();
-    const db = makeDb({ user_id: '75020201', insta: '@tester', tiktok: '@tester', updated_at: new Date().toISOString() });
+    setupRepoMocks(baseUser);
 
     const rapidError = new Error('unavailable');
     rapidError.code = 'RAPIDAPI_UNAVAILABLE';
 
     const result = await triageComplaint(parsed, {
-      db,
       now: new Date('2026-02-01T10:00:00Z'),
       rapidApi: jest.fn(async () => {
         throw rapidError;

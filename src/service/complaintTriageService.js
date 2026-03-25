@@ -1,6 +1,34 @@
 import { buildAdminSummary, buildOperatorResponse } from './complaintResponseTemplates.js';
+import {
+  getUserByNrp,
+  getAuditCounts as getAuditCountsRepo,
+  getLatestPost,
+} from '../repository/complaintRepository.js';
 
 const SYNC_WINDOW_MS = 30 * 60 * 1000;
+
+/**
+ * Wrap a promise with a timeout. Rejects with a timeout error after `ms` milliseconds.
+ * @param {Promise<any>} promise
+ * @param {number} ms
+ * @returns {Promise<any>}
+ */
+function withTimeout(promise, ms) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const err = new Error(`RapidAPI call timed out after ${ms}ms`);
+      err.code = 'RAPIDAPI_TIMEOUT';
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+}
+
+function getRapidApiTimeoutMs() {
+  const val = Number(process.env.RAPIDAPI_TIMEOUT_MS);
+  return Number.isFinite(val) && val > 0 ? val : 5000;
+}
 
 function normalizeHandle(value) {
   return String(value || '').trim().replace(/^@/, '').toLowerCase();
@@ -10,84 +38,34 @@ function hasCommentIssue(issues = []) {
   return issues.some((issue) => /komentar|comment/i.test(issue || ''));
 }
 
-function assessLowTrust(profile) {
-  if (!profile) return false;
-  const lowPosts = profile.posts === 0 || profile.posts === null;
-  const lowScore = profile.recentActivityScore !== null && profile.recentActivityScore < 10;
-  const noProfilePic = profile.hasProfilePic === false;
-  return lowPosts || lowScore || noProfilePic;
+/**
+ * Assess the profile-level condition codes for a single social profile.
+ * Returns an ordered priority list: ACCOUNT_PRIVATE > NO_PROFILE_PHOTO > NO_CONTENT+LOW_TRUST.
+ * @param {object|null} profile
+ * @returns {string[]}
+ */
+export function assessProfileConditions(profile) {
+  if (!profile) return [];
+  if (profile.isPrivate === true) return ['ACCOUNT_PRIVATE'];
+  if (profile.hasProfilePic === false) return ['NO_PROFILE_PHOTO'];
+  if (profile.posts === 0) return ['NO_CONTENT', 'LOW_TRUST'];
+  return [];
 }
 
 function createDefaultResult() {
   return {
     status: 'NEED_MORE_DATA',
     diagnosisCode: 'UNKNOWN',
+    diagnoses: [],
     confidence: 0.3,
-    evidence: { internal: {}, rapidapi: {} },
+    evidence: { internal: {}, rapidapi: {}, profileLinks: {} },
     nextActions: ['Kirim screenshot profil terbaru dan bukti aksi terakhir.'],
     operatorResponse: '',
     adminSummary: '',
   };
 }
 
-async function getUserByNrp(db, nrp) {
-  const sql = `
-    SELECT user_id, nama, insta, tiktok, updated_at
-    FROM "user"
-    WHERE user_id = $1
-    LIMIT 1
-  `;
-  const result = await db.query(sql, [nrp]);
-  return result.rows?.[0] || null;
-}
-
-async function getAuditCounts(db, platform, username, { windowStart, windowEnd, includeAllTime = false } = {}) {
-  const normalized = normalizeHandle(username);
-  if (!normalized) return 0;
-
-  const queryMap = {
-    instagram: `
-      SELECT COUNT(DISTINCT p.shortcode) AS total
-      FROM insta_like l
-      JOIN insta_post p ON p.shortcode = l.shortcode
-      JOIN LATERAL (
-        SELECT lower(replace(trim(COALESCE(elem->>'username', trim(both '"' FROM elem::text))), '@', '')) AS username
-        FROM jsonb_array_elements(COALESCE(l.likes, '[]'::jsonb)) AS elem
-      ) AS liked ON liked.username = $1
-      ${
-        includeAllTime
-          ? ''
-          : 'WHERE p.created_at BETWEEN $2::timestamptz AND $3::timestamptz'
-      }
-    `,
-    tiktok: `
-      SELECT COUNT(DISTINCT c.video_id) AS total
-      FROM tiktok_comment c
-      JOIN tiktok_post p ON p.video_id = c.video_id
-      JOIN LATERAL (
-        SELECT lower(replace(trim(raw_username), '@', '')) AS username
-        FROM jsonb_array_elements_text(COALESCE(c.comments, '[]'::jsonb)) AS raw(raw_username)
-      ) AS commenter ON commenter.username = $1
-      ${
-        includeAllTime
-          ? ''
-          : 'WHERE p.created_at BETWEEN $2::timestamptz AND $3::timestamptz'
-      }
-    `,
-  };
-
-  const sql = queryMap[platform];
-  if (!sql) return 0;
-
-  const params = includeAllTime
-    ? [normalized]
-    : [normalized, windowStart.toISOString(), windowEnd.toISOString()];
-  const result = await db.query(sql, params);
-  const total = Number(result.rows?.[0]?.total || 0);
-  return Number.isFinite(total) ? total : 0;
-}
-
-export async function triageComplaint(parsed, { db, now = new Date(), rapidApi }) {
+export async function triageComplaint(parsed, { db, now = new Date(), rapidApi, clientId = null }) {
   const result = createDefaultResult();
   const reporter = parsed?.reporter || {};
 
@@ -101,7 +79,7 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi }
 
   let user;
   try {
-    user = await getUserByNrp(db, reporter.nrp);
+    user = await getUserByNrp(reporter.nrp, db);
   } catch (err) {
     result.status = 'ERROR';
     result.diagnosisCode = 'UNKNOWN';
@@ -130,19 +108,16 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi }
   let historicalAuditLikeCount = 0;
   let historicalAuditCommentCount = 0;
   try {
-    auditLikeCount = reporter.igUsername
-      ? await getAuditCounts(db, 'instagram', reporter.igUsername, { windowStart, windowEnd })
-      : 0;
-    auditCommentCount = reporter.tiktokUsername
-      ? await getAuditCounts(db, 'tiktok', reporter.tiktokUsername, { windowStart, windowEnd })
-      : 0;
-
-    historicalAuditLikeCount = reporter.igUsername
-      ? await getAuditCounts(db, 'instagram', reporter.igUsername, { includeAllTime: true })
-      : 0;
-    historicalAuditCommentCount = reporter.tiktokUsername
-      ? await getAuditCounts(db, 'tiktok', reporter.tiktokUsername, { includeAllTime: true })
-      : 0;
+    const igAudit = reporter.igUsername
+      ? await getAuditCountsRepo(reporter.igUsername, 'instagram', { windowStart, windowEnd }, db)
+      : { recentCount: 0, allTimeCount: 0 };
+    const tiktokAudit = reporter.tiktokUsername
+      ? await getAuditCountsRepo(reporter.tiktokUsername, 'tiktok', { windowStart, windowEnd }, db)
+      : { recentCount: 0, allTimeCount: 0 };
+    auditLikeCount = igAudit.recentCount;
+    auditCommentCount = tiktokAudit.recentCount;
+    historicalAuditLikeCount = igAudit.allTimeCount;
+    historicalAuditCommentCount = tiktokAudit.allTimeCount;
   } catch (err) {
     result.evidence.internal.auditTableStatus = 'audit table not found';
   }
@@ -155,6 +130,27 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi }
   const noRecentAuditData = auditLikeCount === 0 && auditCommentCount === 0;
   const hasHistoricalAuditData = historicalAuditLikeCount > 0 || historicalAuditCommentCount > 0;
 
+  // T016: ALREADY_PARTICIPATED — user has prior audit history
+  if (hasHistoricalAuditData) {
+    result.diagnoses.push('ALREADY_PARTICIPATED');
+    // Fetch latest post URL for the platform with historical data
+    const alreadyPlatform = historicalAuditLikeCount > 0 ? 'instagram' : 'tiktok';
+    let latestPostUrl = null;
+    if (clientId) {
+      try {
+        const latestPost = await getLatestPost(clientId, alreadyPlatform, db);
+        if (latestPost?.shortcode) {
+          latestPostUrl = `https://instagram.com/p/${latestPost.shortcode}`;
+        } else if (latestPost?.videoId) {
+          latestPostUrl = `https://tiktok.com/video/${latestPost.videoId}`;
+        }
+      } catch {
+        /* ignore: latestPostUrl stays null */
+      }
+    }
+    result.evidence.latestPostUrl = latestPostUrl;
+  }
+
   const mismatchIg = reporter.igUsername && normalizeHandle(reporter.igUsername) !== normalizeHandle(usernameDb.instagram);
   const mismatchTiktok = reporter.tiktokUsername && normalizeHandle(reporter.tiktokUsername) !== normalizeHandle(usernameDb.tiktok);
   const hasMismatch = Boolean(mismatchIg || mismatchTiktok);
@@ -166,21 +162,59 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi }
     hasCommentIssue(parsed?.issues || []);
 
   const rapidEvidence = {};
+  let rapidProviderError = null;
   if (shouldCallRapid && typeof rapidApi === 'function') {
     try {
-      if (reporter.igUsername) {
-        rapidEvidence.instagram = await rapidApi({
-          platform: 'instagram',
-          username: reporter.igUsername,
-        });
-      }
-      if (reporter.tiktokUsername) {
-        rapidEvidence.tiktok = await rapidApi({
-          platform: 'tiktok',
-          username: reporter.tiktokUsername,
-        });
+      if (hasMismatch) {
+        // T015: dual-fetch reported + DB profiles in parallel (H1: no 3rd call)
+        const mPlatform = mismatchIg ? 'instagram' : 'tiktok';
+        const mReported = mismatchIg ? reporter.igUsername : reporter.tiktokUsername;
+        const mDb = mismatchIg ? usernameDb.instagram : usernameDb.tiktok;
+
+        const safeFetch = (platform, username) =>
+          username
+            ? withTimeout(rapidApi({ platform, username }), getRapidApiTimeoutMs()).catch(() => null)
+            : Promise.resolve(null);
+
+        const [reportedProfile, dbProfile] = await Promise.all([
+          safeFetch(mPlatform, mReported),
+          safeFetch(mPlatform, mDb),
+        ]);
+
+        // Store in rapidEvidence for profile-condition checks (H1: reuse, no re-fetch)
+        if (mPlatform === 'instagram') rapidEvidence.instagram = reportedProfile;
+        else rapidEvidence.tiktok = reportedProfile;
+
+        // Compute relevance score: followers + media_count, penalty for private
+        const relScore = (p) =>
+          p ? ((p.followers_count || 0) + (p.media_count || 0)) * (p.isPrivate ? 0.5 : 1) : 0;
+        const moreRelevant = relScore(reportedProfile) >= relScore(dbProfile) ? 'reported' : 'db';
+        result.evidence.mismatch = { reportedProfile, dbProfile, moreRelevant };
+
+        // Fetch non-mismatch platform if applicable
+        if (mismatchIg && reporter.tiktokUsername) {
+          rapidEvidence.tiktok = await withTimeout(rapidApi({ platform: 'tiktok', username: reporter.tiktokUsername }), getRapidApiTimeoutMs()).catch(() => null);
+        } else if (!mismatchIg && reporter.igUsername) {
+          rapidEvidence.instagram = await withTimeout(rapidApi({ platform: 'instagram', username: reporter.igUsername }), getRapidApiTimeoutMs()).catch(() => null);
+        }
+      } else {
+        if (reporter.igUsername) {
+          rapidEvidence.instagram = await withTimeout(
+            rapidApi({ platform: 'instagram', username: reporter.igUsername }),
+            getRapidApiTimeoutMs(),
+          );
+        }
+        if (reporter.tiktokUsername) {
+          rapidEvidence.tiktok = await withTimeout(
+            rapidApi({ platform: 'tiktok', username: reporter.tiktokUsername }),
+            getRapidApiTimeoutMs(),
+          );
+        }
       }
     } catch (err) {
+      // Mark EXTERNAL_NA as additive flag — main diagnosis still proceeds with internal data
+      result.diagnoses.push('EXTERNAL_NA');
+      rapidProviderError = { status: err.status || 503, message: err.message };
       if (err?.code === 'RAPIDAPI_UNAVAILABLE') {
         result.diagnosisCode = 'SYNC_PENDING';
         result.confidence = 0.45;
@@ -188,22 +222,41 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi }
           'RapidAPI sedang tidak tersedia. Mohon kirim screenshot profil + bukti aksi terbaru.',
           'Ulangi like/komentar sekali lagi, lalu cek ulang setelah 30 menit.',
         ];
-        result.evidence.rapidapi.providerError = {
-          status: err.status || 503,
-          message: err.message,
-        };
+        result.evidence.rapidapi = { providerError: rapidProviderError };
         result.operatorResponse = buildOperatorResponse(result, parsed);
         result.adminSummary = buildAdminSummary(result, parsed);
         return result;
       }
+      // For other network errors: continue triage with internal data only
     }
   }
 
   result.evidence.rapidapi = rapidEvidence;
+  if (rapidProviderError) {
+    result.evidence.rapidapi.providerError = rapidProviderError;
+  }
+
+  // Populate profileLinks so templates/UI can render direct links
+  if (reporter.igUsername) {
+    result.evidence.profileLinks.instagram = `https://instagram.com/${reporter.igUsername}`;
+  }
+  if (reporter.tiktokUsername) {
+    result.evidence.profileLinks.tiktok = `https://tiktok.com/@${reporter.tiktokUsername}`;
+  }
 
   if (hasMismatch) {
     result.status = 'NEED_MORE_DATA';
     result.diagnosisCode = 'USERNAME_MISMATCH';
+    result.diagnoses.push('USERNAME_MISMATCH');
+
+    // H1: reuse reportedProfile from dual-fetch (no 3rd RapidAPI call)
+    const mPlatform = mismatchIg ? 'instagram' : 'tiktok';
+    const reportedProfileForAssess = result.evidence.mismatch?.reportedProfile
+      ?? (mPlatform === 'instagram' ? rapidEvidence.instagram : rapidEvidence.tiktok);
+    for (const code of assessProfileConditions(reportedProfileForAssess)) {
+      result.diagnoses.push(code);
+    }
+
     result.confidence = 0.92;
     result.nextActions = [
       'Samakan username di CICERO dengan username yang dipakai saat aksi.',
@@ -216,9 +269,19 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi }
     if (anyPrivate) {
       result.status = 'NEED_MORE_DATA';
       result.diagnosisCode = 'ACCOUNT_PRIVATE';
+      result.diagnoses = ['ACCOUNT_PRIVATE'];
       result.confidence = 0.9;
       result.nextActions = [
         'Ubah akun ke public sementara proses verifikasi.',
+        'Ulangi aksi dan tunggu sinkronisasi 30 menit.',
+      ];
+    } else if (profiles.some((p) => p.hasProfilePic === false)) {
+      result.status = 'NEED_MORE_DATA';
+      result.diagnosisCode = 'NO_PROFILE_PHOTO';
+      result.diagnoses = ['NO_PROFILE_PHOTO'];
+      result.confidence = 0.85;
+      result.nextActions = [
+        'Tambahkan foto profil agar akun terverifikasi.',
         'Ulangi aksi dan tunggu sinkronisasi 30 menit.',
       ];
     } else if (!user) {
@@ -252,9 +315,10 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi }
         'Komentar terdeteksi 0. Gunakan komentar teks normal (tanpa spam emoji/simbol).',
         'Ulangi komentar di konten target lalu tunggu sinkronisasi 30 menit.',
       ];
-    } else if (profiles.some((profile) => assessLowTrust(profile))) {
+    } else if (profiles.some((p) => p.posts === 0)) {
       result.status = 'NEED_MORE_DATA';
-      result.diagnosisCode = 'LOW_TRUST';
+      result.diagnosisCode = 'NO_CONTENT';
+      result.diagnoses = ['NO_CONTENT', 'LOW_TRUST'];
       result.confidence = 0.8;
       result.nextActions = [
         'Aktivitas akun masih rendah, optimalkan profil/aktivitas dahulu.',
