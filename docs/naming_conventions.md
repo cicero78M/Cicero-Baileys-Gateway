@@ -30,3 +30,14 @@ This document summarizes the naming style used throughout **Cicero_V2**. Follow 
 | `operator_registration_sessions` | `phone_number VARCHAR(30) PRIMARY KEY` (no `_id` suffix) | Session is keyed by the caller’s phone number; only one active session per number can exist at a time. Using a surrogate key adds no value and complicates the upsert-on-conflict pattern. |
 
 These guidelines may be expanded as needed but serve as the basic reference for adding new modules.
+
+## SQL Migration Files
+
+Migration files in `sql/migrations/` use the pattern `YYYYMMDD_NNN_description.sql`, where:
+- `YYYYMMDD` is the date the migration was authored.
+- `NNN` is a zero-padded sequence number within the same date (e.g. `001`, `002`).
+- `description` is a short `snake_case` summary of the migration's purpose.
+
+Example: `20260325_003_create_operators.sql`
+
+This deviates from the constitution's base pattern (`YYYYMMDD_description.sql`) to support multiple migrations within a single day without relying on alphabetical ordering. The sequence number serves as the unambiguous order guarantee.
