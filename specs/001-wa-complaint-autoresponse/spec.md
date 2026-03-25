@@ -158,7 +158,7 @@ Reporter mengirimkan komplain dengan username IG/TikTok yang berbeda dari yang t
 - **SC-003**: 0% pesan non-komplain direspons secara keliru dari jalur complaint handler (false positive khusus fitur ini).
 - **SC-004**: Bot tetap beroperasi penuh dan memproses semua pesan komplain bahkan setelah WhatsApp client reconnect — job yang tertahan di Redis dilanjutkan saat `attachWorker` dipanggil ulang; tidak ada pesan terdrop.
 - **SC-005**: Lebih dari 95% operator melaporkan respons bot relevan dan dapat langsung ditindaklanjuti.
-  *(Catatan: mekanisme pengukuran — definisi kueri tabel `admin_notes` dan cara pencatatan kepuasan operator — bukan cakupan fitur ini; dideferral ke task observabilitas terpisah. Untuk progres, lihat referensi T029 dan konstitusi §V.)*
+  *(Catatan: mekanisme pengukuran — definisi kueri tabel `admin_notes` dan cara pencatatan kepuasan operator — bukan cakupan fitur ini; dideferral ke task observabilitas terpisah (belum dijadwalkan dalam branch ini).)*
 
 ---
 

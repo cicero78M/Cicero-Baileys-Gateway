@@ -32,7 +32,7 @@
 - [ ] T004 [P] Di `src/service/waAutoComplaintService.js`: tambahkan `import { enqueueSend } from './waOutbox.js'`; ganti **semua** panggilan `waClient.sendMessage(jid, payload)` di dalam `sendComplaintMessages()` dan `handleComplaintMessageIfApplicable` dengan `await enqueueSend(jid, payload)`; hapus parameter `waClient` dari `sendComplaintMessages` jika setelah penggantian satu-satunya sisa penggunaan `waClient` adalah `markSeen`; pastikan `markSeen` tetap dipanggil via `waClient` langsung (FR-010 · FR-011 · GAP-008 · Constitution VII)
 - [ ] T005 [P] Di `src/service/complaintParser.js`: setelah memanggil `handleNormalizer.normalizeHandleValue(raw)`, tambahkan guard `if (!normalized || normalized.length < 3) return '';` — guard ini adalah pengecekan terakhir setelah stripping `@`, ekstraksi dari URL, dan penolakan segmen jalur sistem (GAP-009 · FR-002)
 - [ ] T006 [P] Buat `tests/waServiceOutbox.test.js`: (a) mock `attachWorker` via `jest.fn()` dan assert dipanggil tepat sekali ketika `connection === 'open'` di-emit; (b) assert `attachWorker` TIDAK dipanggil untuk state `'connecting'` atau `'close'`; (c) simulasikan `'open'` dipanggil dua kali (reconnect) — harus aman, tidak crash, tidak duplikasi efek samping (GAP-001 · FR-010)
-- [ ] T007 [P] Buat `tests/complaintParserNormalize.test.js`: test cases min-length + URL normalization — `'p'` → `''` (panjang 1); `'ab'` → `''` (panjang 2); `'abc'` → `'abc'` (lolos); `'https://instagram.com/p/ABC123/'` → `''` (normalizer returns `'p'`, lalu min-length blocks); `'@johndoe'` → `'johndoe'`; `'https://instagram.com/johndoe'` → `'johndoe'`; `'https://tiktok.com/@johndoe'` → `'johndoe'`; URL dengan trailing slash dan query string dinormalisasi dengan benar; **bold/italic marker tests (A1+I4)**: `'*johndoe*'` → `'johndoe'` (bold WA marker stripped sebelum normalisasi lainnya); `'_johndoe_'` → `'johndoe'` (italic marker stripped); header `'*Pesan Komplain*'` dikenali sebagai trigger valid sama seperti plain-text setelah stripping (GAP-009 · FR-001 · FR-002)
+- [ ] T007 [P] Buat `tests/complaintParserNormalize.test.js`: test cases min-length + URL normalization — `'p'` → `''` (panjang 1); `'ab'` → `''` (panjang 2); `'abc'` → `'abc'` (lolos); `'https://instagram.com/p/ABC123/'` → `''` (normalizer returns `'p'`, lalu min-length blocks); `'@johndoe'` → `'johndoe'`; `'https://instagram.com/johndoe'` → `'johndoe'`; `'https://tiktok.com/@johndoe'` → `'johndoe'`; URL dengan trailing slash dan query string dinormalisasi dengan benar; **bold/italic marker tests**: `'*johndoe*'` → `'johndoe'` (bold WA marker stripped sebelum normalisasi lainnya); `'_johndoe_'` → `'johndoe'` (italic marker stripped); header `'*Pesan Komplain*'` dikenali sebagai trigger valid sama seperti plain-text setelah stripping (GAP-009 · FR-001 · FR-002)
 
 **Checkpoint**: BullMQ worker terhubung ke adapter; group filter aktif dari DB; semua send di complaint path melalui `enqueueSend`; parser min-length guard aktif. Jalankan `npm test -- tests/waServiceOutbox.test.js tests/complaintParserNormalize.test.js` dan pastikan kedua file hijau.
 
@@ -77,7 +77,7 @@
 
 ### pendingConfirmationStore — GAP-004
 
-- [ ] T013 [US3] Buat `src/service/pendingConfirmationStore.js`: TTL Map in-memory keyed by `${senderJid}:${platform}`; TTL 15 menit dari creation; **max 1 000 entries dengan LRU eviction** — saat Map mencapai batas, entry terlama dieviksi sebelum insert baru (konsisten dengan pola FR-009; Constitution VII); ekspor tiga fungsi: `setConfirmation(senderJid, platform, data)` — menyimpan `{ senderJid, platform, oldUsername, newUsername, nrp, expiresAt: Date.now() + 15*60*1000 }`; jika key sudah ada, **timpa** entry lama (data + TTL diperbarui); `getConfirmation(senderJid, platform)` — cek `data.expiresAt > Date.now()`, hapus entry stale, return null jika expired; `deleteConfirmation(senderJid, platform)` (GAP-004 · FR-014 · Constitution VII · C1)
+- [ ] T013 [US3] Buat `src/service/pendingConfirmationStore.js`: TTL Map in-memory keyed by `${senderJid}:${platform}`; TTL 15 menit dari creation; **max 1 000 entries dengan LRU eviction** — saat Map mencapai batas, entry terlama dieviksi sebelum insert baru (konsisten dengan pola FR-009; Constitution VII); ekspor empat fungsi: `setConfirmation(senderJid, platform, data)` — menyimpan `{ senderJid, platform, oldUsername, newUsername, nrp, expiresAt: Date.now() + 15*60*1000 }`; jika key sudah ada, **timpa** entry lama (data + TTL diperbarui); `getConfirmation(senderJid, platform)` — cek `data.expiresAt > Date.now()`, hapus entry stale, return null jika expired; `deleteConfirmation(senderJid, platform)`; `getConfirmationStoreStat()` — kembalikan `{ size: map.size, maxEntries: 1000 }` (digunakan oleh T029 untuk health endpoint wiring — sumber kebenaran interface ada di sini) (GAP-004 · FR-014 · Constitution VII · C1)
 - [ ] T014 [P] [US3] Buat `tests/pendingConfirmationStore.test.js`: (a) set lalu get dalam TTL mengembalikan data yang benar; (b) get setelah expired (mock `Date.now` melewati batas 15 menit) mengembalikan null; (c) entry expired dihapus dari Map saat `get` (tidak ada memory leak); (d) `deleteConfirmation` menghapus entry yang ada; (e) `getConfirmation` pada key yang tidak ada mengembalikan null; (f) set 1 001 entry aktif — entry terlama dieviksi dan tidak lagi bisa diambil via `getConfirmation` (LRU cap = 1 000); (g) `setConfirmation` pada key yang sudah ada menimpa data + TTL lama (U3 · C1 · GAP-004 · FR-014)
 
 ### USERNAME_MISMATCH Dual-Fetch — GAP-003
@@ -87,6 +87,7 @@
 ### Repository Layer — C1 Fix
 
 - [ ] T027 [US3] Buat `src/repository/complaintRepository.js`: ekspor **empat** fungsi — (a) `async function updateUserSocialHandle(userId, platform, handle)`: parameterized `UPDATE "user" SET insta = $1 WHERE user_id = $2` (instagram) atau `tiktok` equivalent; lempar `Error('Unknown platform')` jika platform tidak dikenal; (b) `async function getLatestPost(clientId, platform)`: parameterized `SELECT shortcode FROM insta_post WHERE client_id = $1 ORDER BY created_at DESC LIMIT 1` (IG) atau `SELECT video_id FROM tiktok_post WHERE client_id = $1 ORDER BY created_at DESC LIMIT 1` (TikTok), kembalikan `{ shortcode }` / `{ videoId }` atau `null`; (c) `async function getUserByNrp(userId)`: parameterized `SELECT user_id, insta, tiktok FROM "user" WHERE user_id = $1`, kembalikan row atau `null` — **migrasi FR-003 existing SQL ke repository layer (C2)**; (d) `async function getAuditCounts(userId, platform, windowMs)`: parameterized query ke `insta_like`/`tiktok_comment` JSONB menggunakan existing audit query pattern, kembalikan `{ recentCount, allTimeCount }` — **migrasi FR-004 existing SQL ke repository layer (C2)**; semua fungsi import `pool` dari koneksi DB yang ada di codebase; semua query gunakan `$1`, `$2`, dst params — Constitution I + Constitution VI. Setelah membuat repository, update `complaintTriageService.js` untuk menggunakan `getUserByNrp()` dan `getAuditCounts()` menggantikan SQL inline yang ada (C2 · C1 · FR-003 · FR-004 · FR-015 · FR-016 · GAP-005 · GAP-006)
+- [ ] T030 [P] [US3] Buat `tests/complaintRepository.test.js`: unit test untuk semua 4 fungsi di `src/repository/complaintRepository.js` menggunakan mock `pool.query` (tidak ada koneksi DB nyata) — (a) `updateUserSocialHandle(userId, 'instagram', handle)` memanggil parameterized query dengan `$1=handle, $2=userId`; (b) `updateUserSocialHandle` dengan platform tidak dikenal melempar `Error('Unknown platform')`; (c) `getLatestPost(clientId, 'instagram')` mengembalikan `{ shortcode }` jika ada row, `null` jika tidak ada baris; (d) `getUserByNrp(userId)` mengembalikan row object jika ada, `null` jika DB tidak mengembalikan baris; (e) `getAuditCounts(userId, 'instagram', windowMs)` mengembalikan `{ recentCount, allTimeCount }` sesuai mock rows — Constitution III (setiap repository HARUS memiliki dedicated unit test; T027 TIDAK ditutup sampai T030 hijau) (C1-test · FR-003 · FR-004 · T027-prerequisite)
 
 ### ALREADY_PARTICIPATED + Latest Post URL — GAP-006
 
@@ -118,9 +119,9 @@
 
 - [ ] T023 [P] Grep `src/service/waAutoComplaintService.js` untuk sisa panggilan `waClient.sendMessage(` — perbaiki setiap temuan dengan `enqueueSend` (GAP-008 completeness check · FR-010)
 - [ ] T024 [P] Verifikasi `EXTERNAL_NA` bersifat additive di `buildOperatorResponse`: ketika RapidAPI tidak tersedia, `EXTERNAL_NA` muncul dalam output bersama kode utama — bukan menggantikannya (FR-005 degraded mode)
-- [ ] T026 [P] Terapkan `RAPIDAPI_TIMEOUT_MS` env var (default 5 000 ms) pada semua panggilan `mapProviderToSocialProfile()` di `src/service/complaintTriageService.js` menggunakan axios timeout atau `AbortSignal.timeout()`; tambahkan test case di `tests/complaintTriageProfileCodes.test.js`: mock RapidAPI dengan delay 4 000 ms dan assert triage tetap selesai ≤ 10 detik total (SC-001 · U1 · FR-005 · FR-013)
-- [ ] T028 [P] ~~Audit dan perbaiki~~  `src/service/waEventAggregator.js` — **kode sudah difix**: `MAX_DEDUP_ENTRIES = 10_000` dan `evictOldestIfFull(key)` sudah diimplementasi dan dipanggil di kedua `seenMessages.set()` call-site. Task ini adalah membuat **test coverage** `tests/waEventAggregatorDedup.test.js`: (a) insert 10 001 entry unik → `seenMessages.size === 10 000` (oldest dieviksi); (b) entry dieviksi tidak lagi dikenali sebagai duplikat jika diterima ulang; (c) TTL expiry via `cleanupExpiredMessages()` tetap berfungsi setelah LRU cap aktif; **(d) simulasi reconnect: panggil `connection.update` dengan state `'close'` kemudian `'open'` — assert `seenMessages` TIDAK dikosongkan (reconnect biasa tidak mereset dedup — FR-009 clarification [I3])**; Note: `getMessageDedupStats()` sudah ada sebagai pre-existing export — test boleh menggunakannya untuk assert `.size` (FR-009 · Constitution VII · H2 · I3)
-- [ ] T029 [P] Wire cache metrics ke `/api/health/wa`: import `getMessageDedupStats` dari `src/service/waEventAggregator.js` dan tambahkan `getConfirmationStoreStat()` export ke `src/service/pendingConfirmationStore.js` (kembalikan `{ size: map.size, maxEntries: 1000 }`); tambahkan keduanya ke payload response `/api/health/wa` di bawah key `caches: { dedupMap: getMessageDedupStats(), confirmationStore: getConfirmationStoreStat() }` — Constitution V (health endpoint HARUS expose cache sizes) (C3 · Constitution V · FR-009)
+- [ ] T026 [P] Terapkan `RAPIDAPI_TIMEOUT_MS` env var (default 5 000 ms) pada semua panggilan `mapProviderToSocialProfile()` di `src/service/complaintTriageService.js` menggunakan axios timeout atau `AbortSignal.timeout()`; tambahkan test case di `tests/complaintTriageProfileCodes.test.js`: mock RapidAPI dengan delay 4 000 ms dan assert triage tetap selesai ≤ 10 detik total; **(sub-case b)** mock delay `RAPIDAPI_TIMEOUT_MS + 1 000 ms` (6 000 ms) — assert (i) panggilan dibatalkan setelah ≈5 000 ms, (ii) flag `EXTERNAL_NA` di-set bersama kode utama, (iii) total waktu triage < 10 000 ms (SC-001 · U1 · FR-005 · FR-013)
+- [ ] T028 [P] ~~Audit dan perbaiki~~  `src/service/waEventAggregator.js` — **kode sudah difix**: `MAX_DEDUP_ENTRIES = 10_000` dan `evictOldestIfFull(key)` sudah diimplementasi dan dipanggil di kedua `seenMessages.set()` call-site. Task ini adalah membuat **test coverage** `tests/waEventAggregatorDedup.test.js`: (a) insert 10 001 entry unik → `seenMessages.size === 10 000` (oldest dieviksi); (b) entry dieviksi tidak lagi dikenali sebagai duplikat jika diterima ulang; (c) TTL expiry via `cleanupExpiredMessages()` tetap berfungsi setelah LRU cap aktif; **(d) simulasi reconnect: panggil `connection.update` dengan state `'close'` kemudian `'open'` — assert `seenMessages` TIDAK dikosongkan (reconnect biasa tidak mereset dedup — FR-009 clarification [I3])**; Note: `getMessageDedupStats()` sudah ada sebagai pre-existing export — test boleh menggunakannya untuk assert `.size` (FR-009 · Constitution VII)
+- [ ] T029 [P] Wire cache metrics ke `/api/health/wa`: import `getMessageDedupStats` dari `src/service/waEventAggregator.js` dan gunakan `getConfirmationStoreStat()` dari `src/service/pendingConfirmationStore.js` (didefinisikan di T013 sebagai ekspor keempat; sumber kebenaran interface ada di T013); tambahkan keduanya ke payload response `/api/health/wa` di bawah key `caches: { dedupMap: getMessageDedupStats(), confirmationStore: getConfirmationStoreStat() }` — Constitution V (health endpoint HARUS expose cache sizes) (C3 · Constitution V · FR-009)
 - [ ] T025 Jalankan `npm run lint` diikuti `npm test` — seluruh lint rules harus pass dan semua test suite harus hijau
 
 ---
@@ -132,7 +133,7 @@ Phase 1 (T001)
   └── Phase 2 (T002, T003[P], T004[P], T005[P], T006[P], T007[P])
         └── Phase 3 (T008, T009[P])          ← MVP shippable after this
               ├── Phase 4 (T010, T011[P], T012[P])
-              └── Phase 5 (T013, T014[P], T027, T015, T016[P], T017, T018, T019[P], T020[P], T021[P], T022[P])
+              └── Phase 5 (T013, T014[P], T027, T030[P], T015, T016[P], T017, T018, T019[P], T020[P], T021[P], T022[P])
                     └── Phase 6 (T023[P], T024[P], T026[P], T028[P], T029[P], T025)
 ```
 
@@ -144,7 +145,7 @@ Phase 1 (T001)
 
 ### Within Each User Story
 
-- Repository layer (T027) sebelum service changes yang melakukan DB calls melaluinya (T016, T018)
+- Repository layer (T027) + test coverage (T030) sebelum service changes yang melakukan DB calls melaluinya (T016, T018)
 - Models / stores sebelum services yang menggunakannya (T013 sebelum T017/T018)
 - Triage service changes (T015, T016) sebelum template changes yang mengkonsumsi evidence fields (T020)
 - `handleConfirmationDM` implementation (T018) sebelum wiring di waService.js (T019)
@@ -162,8 +163,8 @@ Phase 1 (T001)
 
 ### Phase 5 (US3)
 ```bash
-# Batch A: T013 + T014[P] + T027  (pendingConfirmationStore — create + test; complaintRepository.js — create)
-# Batch B setelah T027: T015 + T016[P]  (triage dual-fetch + ALREADY_PARTICIPATED, gunakan complaintRepository)
+# Batch A: T013 + T014[P] + T027 + T030[P]  (pendingConfirmationStore — create + test; complaintRepository.js — create + test)
+# Batch B setelah T030: T015 + T016[P]  (triage dual-fetch + ALREADY_PARTICIPATED, gunakan complaintRepository)
 # Batch C setelah A: T017 + T018 + T019[P] + T020[P]  (konsumsi store + repository)
 # Batch D paralel setelah B+C: T021[P] + T022[P]  (test files berbeda)
 ```
@@ -186,8 +187,8 @@ Phase 1 (T001)
 |----|-------------------|------|--------|
 | FR-001 | Deteksi "Pesan Komplain" dari grup terdaftar / DM saja | T003, T009 | ✅ GAP-007 fix |
 | FR-002 | Parse field wajib + normalisasi username + min-length guard | T005, T007 | ✅ GAP-009 fix |
-| FR-003 | Lookup NRP/NIP di tabel `user` (`WHERE user_id = $1`) | T027 | ✅ Existing → migrasi ke repository layer (C2) |
-| FR-004 | Hitung aktivitas audit 30-min + all-time | T027 | ✅ Existing → migrasi ke repository layer (C2) |
+| FR-003 | Lookup NRP/NIP di tabel `user` (`WHERE user_id = $1`) | T027, T030 | ✅ Existing → migrasi ke repository layer (C2) |
+| FR-004 | Hitung aktivitas audit 30-min + all-time | T027, T030 | ✅ Existing → migrasi ke repository layer (C2) |
 | FR-005 | Verifikasi profil sosmed via RapidAPI + kondisi spesifik + link profil | T010, T011, T012, T024 | ✅ GAP-002 fix |
 | FR-006 | Kirim triage result ke grup via `buildOperatorResponse()` | T004, T008, T009, T011, T020 | ✅ GAP-008 fix |
 | FR-007 | Kirim admin summary ke DM pengirim via `buildAdminSummary()` | T004, T008, T009 | ✅ GAP-008 fix |

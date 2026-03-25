@@ -359,7 +359,7 @@ waService.createHandleMessage()
 |------|---------|
 | `src/service/waService.js` | Import + call `attachWorker` on `'open'`; wire `handleConfirmationDM` before complaint check |
 | `src/service/waAutoComplaintService.js` | Replace `sendMessage`→`enqueueSend`; add `handleConfirmationDM`; add FR-014 DM send + `setConfirmation` call; call `complaintRepository.updateUserSocialHandle()` for DB update (C1) |
-| `src/service/waEventAggregator.js` | Add 10 000-entry LRU eviction cap on `seenMessages` Map (T028 — H2 · FR-009 · Constitution VII) |
+| `src/service/waEventAggregator.js` | **Already modified** — LRU cap (`MAX_DEDUP_ENTRIES = 10_000`, `evictOldestIfFull`) already in place; T028 adds test coverage only |
 | `src/service/complaintTriageService.js` | Fix profile conditions; add FR-013 dual-fetch (reuse `reportedProfile` for GAP-002 — H1); add FR-016 ALREADY_PARTICIPATED + call `complaintRepository.getLatestPost()` (C1); **replace existing `getUserByNrp` + audit-count SQL with `complaintRepository.getUserByNrp()` + `complaintRepository.getAuditCounts()` (C2)** |
 | `src/service/complaintResponseTemplates.js` | Add all missing code templates + profile links + `buildMismatchConfirmationDM` |
 | `src/service/complaintParser.js` | Add min-length < 3 guard after `normalizeHandleValue` |
