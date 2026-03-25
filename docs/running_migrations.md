@@ -15,6 +15,28 @@ node scripts/run_migration.js sql/migrations/<migration-file>.sql
 node scripts/run_migration.js sql/migrations/20260209_add_unique_constraint_user_whatsapp.sql
 ```
 
+### Same-Day Sequential Migrations
+
+When a feature requires multiple migrations on the same date, append a zero-padded sequence number after the date:
+
+```
+sql/migrations/YYYYMMDD_NNN_description.sql
+```
+
+**Example** (seven migrations for feature `003-sosmed-task-autoresponse`, all dated 2026-03-25):
+
+```bash
+20260325_001_client_default_sentinel.sql
+20260325_002_create_client_config.sql
+20260325_003_create_operators.sql
+20260325_004_create_operator_registration_sessions.sql
+20260325_005_alter_insta_post_task_columns.sql
+20260325_006_alter_tiktok_post_task_columns.sql
+20260325_007_seed_client_config_defaults.sql
+```
+
+Apply them in strict numeric order. The migration runner does not enforce ordering automatically.
+
 ## Why Use the Migration Runner?
 
 The migration runner script (`scripts/run_migration.js`) provides:

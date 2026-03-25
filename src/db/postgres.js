@@ -8,6 +8,7 @@ const pool = new Pool({
   database: env.DB_NAME,
   password: env.DB_PASS,
   port: env.DB_PORT,
+  options: '-c timezone=Asia/Jakarta',
 });
 
 export const query = (text, params) => pool.query(text, params);
