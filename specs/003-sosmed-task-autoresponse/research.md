@@ -2,7 +2,7 @@
 
 **Feature**: `003-sosmed-task-autoresponse`  
 **Date**: 2026-03-25  
-**Status**: Complete — all NEEDS CLARIFICATION resolved
+**Status**: Complete — all NEEDS CLARIFICATION resolved (updated: clarify pass 3)
 
 ---
 
@@ -10,12 +10,15 @@
 
 ### 1. Message Routing — Group vs DM
 
-**Decision**: Route based on JID suffix from Baileys message object.  
+**Decision**: Route based on JID suffix from Baileys message object.
 **Implementation**:
-- `chatId.endsWith('@g.us')` → group message → alur recap engagement
-- `chatId.endsWith('@s.whatsapp.net')` → DM → alur input tugas atau registrasi
+- `chatId.endsWith('@g.us')` → group message → **record URLs to DB + send ack only (no live fetch)**
+- `chatId.endsWith('@s.whatsapp.net')` → DM → check operator registration, then choose:
+  - Registered operator → live fetch + full engagement recap via DM
+  - Active registration session → registration dialog handler
+  - Unregistered (no session) → start registration flow
 
-**Rationale**: Baileys JID format is stable and documented. No additional lookup needed — JID suffix is deterministic.  
+**Rationale**: Baileys JID format is stable and documented. Live fetch is DM-only per architecture decision — group path is record-and-ack only.
 **Alternatives considered**: Comparing against allowlist of group JIDs (rejected — over-engineered; suffix check is sufficient for routing intent).
 
 ---
@@ -112,9 +115,45 @@ awaiting_satker_choice → (invalid) → awaiting_satker_choice (resend list)
 
 ### 9. Recap Engagement Response Format
 
-**Decision**: Bot sends ≥ 3 sequential messages (ack → status summary → task recap). In the new architecture, each is an `enqueueSend` call queued atomically to preserve order.
+**Decision**: DM path sends 2 sequential messages (engagement recap → ack tugas direkam). Group path sends 1 message (hardcoded ack). Each is an `enqueueSend` call queued atomically to preserve order.
 
-**Rationale**: BullMQ preserves FIFO ordering within a queue. Three enqueued messages arrive in sequence without artificial delay beyond Bottleneck rate limiting.
+**Rationale**: BullMQ preserves FIFO ordering within a queue. Two DM messages arrive in sequence without artificial delay beyond Bottleneck rate limiting. Group only ever sends one ack — no engagement data sent to group.
+
+---
+
+### 10. Group Ack Text — Hardcoded vs `client_config`
+
+**Decision**: Teks ack grup di-hardcode; tidak disimpan di `client_config`. `task_input_ack` config key hanya untuk jalur DM operator terdaftar.
+
+**Rationale**: Group ack tidak memerlukan kustomisasi per satker — teks konfirmasi singkat yang sama cukup untuk semua grup. Memperkenalkan config key baru hanya untuk satu string hardcoded melanggar YAGNI (Constitution VIII). FR-016 dikecualikan eksplisit untuk FR-006a.
+**Alternatives considered**: Separate `group_broadcast_ack` config key (rejected — YAGNI); expand `task_input_ack` to serve both paths (rejected — pollutes DM-specific semantic).
+
+---
+
+### 11. Multi-Group per Satker
+
+**Decision**: Satu `client_group_jid` per `client_id` — single JID string, equality check.
+
+**Rationale**: Matches existing `TEXT` schema column, simpler lookup (`jid === configuredJid`), and `clients.client_group` fallback also stores one JID. Multi-group is a future feature.
+**Alternatives considered**: Comma-separated JID list (rejected — adds parsing complexity; no current requirement).
+
+---
+
+### 12. FR-018 Replay — Message Object Handoff
+
+**Decision**: Pass `originalMessage` object as-is (no reconstruction) with an additional context flag `isReplay: true`.
+
+**Rationale**: Simplest approach. All routing fields (`msg.key.remoteJid`, `msg.key.fromMe`, message body) remain intact. `isReplay: true` is the sole mechanism to skip seen-marking (FR-009) on the second pass — no other behaviour changes.
+**Alternatives considered**: Reconstruct message object (rejected — risk of losing Baileys-internal fields required for routing).
+
+---
+
+### 13. PII Logging Policy
+
+**Decision**: Log nomor WA penuh tanpa masking di FR-020 `info` log entries.
+
+**Rationale**: Sistem internal instansi. Log detail diperlukan untuk debugging operasional. Tidak ada persyaratan masking PII di log internal sistem ini.
+**Alternatives considered**: Mask to last 4 digits (rejected — complicates debugging; not required by applicable regulations for internal systems).
 
 ---
 

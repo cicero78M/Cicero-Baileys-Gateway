@@ -1,40 +1,49 @@
 # Implementation Plan: WhatsApp Gateway — Auto-Response Fetch Tugas Sosmed
 
-**Branch**: `003-sosmed-task-autoresponse` | **Date**: 2026-03-25 | **Spec**: `specs/003-sosmed-task-autoresponse/spec.md`  
+**Branch**: `003-sosmed-task-autoresponse` | **Date**: 2026-03-25 | **Spec**: [spec.md](spec.md)  
 **Input**: Feature specification from `specs/003-sosmed-task-autoresponse/spec.md`
 
 ## Summary
 
-Bot WhatsApp gateway mendeteksi pesan broadcast tugas media sosial dari grup klien terdaftar, melakukan live fetch data engagement dari API Instagram/TikTok, dan membalas dengan rekapitulasi partisipasi. Secara paralel, bot mendukung alur self-registrasi operator: nomor WA yang belum terdaftar yang mengirim format broadcast dipandu melalui dialog 3-langkah (konfirmasi → pilih satker → simpan) sebelum broadcast-nya diproses. Seluruh konfigurasi perilaku (keyword, teks respons, parameter) disimpan di tabel PostgreSQL `client_config` per `client_id` — tidak ada hardcoded value.
-
-**Technical approach**: Refaktor `waAutoSosmedTaskService.js` yang sudah ada; tambahkan 3 repository baru, 2 service baru, 7 migration SQL. Semua outbound via `waOutbox.enqueueSend`. State registrasi disimpan di `operator_registration_sessions`.
+Build an auto-response system that detects WhatsApp broadcast messages containing social media task instructions (like/comment/share, IG/TikTok URLs). Group path records URLs to DB and sends a hardcoded ack. DM path from registered operators performs live fetch engagement via existing `instagramApi.js`/`tiktokApi.js` and sends a full recap. DM from unregistered numbers triggers a 3-step interactive registration dialog, then replays the original broadcast. All new DB state (config, operators, sessions) is PostgreSQL-backed; all outbound messages go through `waOutbox.js` (BullMQ).
 
 ## Technical Context
 
-**Language/Version**: Node.js 22, ESM (`import`/`export`)  
-**Primary Dependencies**: `@whiskeysockets/baileys` (WA), `bullmq` + `ioredis` (outbox queue), `pg` (PostgreSQL), `pino` (logger), `bottleneck` (rate limiter)  
-**Storage**: PostgreSQL (primary data + config + sessions), Redis (BullMQ backing store)  
-**Testing**: Jest (`npm test`), Node.js 20+, all external I/O mocked  
-**Target Platform**: Linux server (Docker + PM2)  
-**Project Type**: WhatsApp auto-response gateway (event-driven, single-process)  
-**Performance Goals**: Broadcast response ≤ 15s (SC-001); 0% false positives on non-broadcast (SC-002)  
-**Constraints**: No hardcoded `client_id` or config values; config cache ≤ 60s TTL; all outbound via BullMQ outbox  
-**Scale/Scope**: Multi-client (N satker), multi-operator per satker, single gateway process
+**Language/Version**: Node.js 22 ESM (`import`/`export`)  
+**Primary Dependencies**: Baileys (WA), BullMQ + Redis (outbox), pg (PostgreSQL), pino (logging), Jest (tests)  
+**Storage**: PostgreSQL — new tables `client_config`, `operators`, `operator_registration_sessions`; altered `insta_post` + `tiktok_post`  
+**Testing**: Jest, Node.js v20+; all I/O mocked (no live API or DB calls in tests)  
+**Target Platform**: Linux server (Docker)  
+**Project Type**: WhatsApp auto-response gateway (single-process Node.js service)  
+**Performance Goals**: Group ack ≤ 5s; DM recap ≤ 15s (includes live fetch with 8s timeout per URL)  
+**Constraints**: ESM only; no `console.log` in production paths; BullMQ outbox for all outbound; parameterised SQL only  
+**Scale/Scope**: Single WA client serving all registered group JIDs + DM registration flow
 
 ## Constitution Check
 
-*GATE: Checked — no violations.*
+*GATE: Must pass before Phase 0 research. Re-checked after Phase 1 design.*
 
-| Principle | Status | Notes |
+| Principle | Check | Status |
 |---|---|---|
-| I. Layered Architecture | ✅ PASS | handler → service → repository chain. No Express objects in services. |
-| II. Naming Conventions | ✅ PASS | All new files camelCase; DB columns snake_case; async functions start with verb |
-| III. Test Coverage | ✅ PASS | Unit tests required for all new repositories and services |
-| IV. Security-First | ✅ PASS | Parameterised SQL throughout; no hardcoded secrets; input validated (phone number normalisation, satker choice range check) |
-| V. Observability | ✅ PASS | FR-020 mandates pino logging for all handler events and errors; no `console.log` in production paths |
-| VI. DB & Migration | ✅ PASS | 7 versioned migration files; `IF NOT EXISTS`; all new tables have `primary key`, `created_at`; indices on FK/query columns |
-| VII. WA Gateway Reliability | ✅ PASS | All outbound via `waOutbox.enqueueSend`; `waEventAggregator` deduplication unchanged; idempotent upserts |
-| VIII. Simplicity & YAGNI | ✅ PASS | No speculative features; helpers only for ≥3 use cases; no new `package.json` deps |
+| I. Layered Architecture | All business logic in `src/service/`; DB in `src/repository/`; handler delegates to service | ✅ PASS |
+| II. Naming Conventions | New files follow `camelCase`; DB columns `snake_case`; boolean helpers prefixed `is`/`has` | ✅ PASS |
+| III. Test Coverage | All new services, repositories, handlers ship with Jest unit tests; no live I/O in tests | ✅ PASS |
+| IV. Security-First | SQL parameterised; no secrets hardcoded; input validated (phone number strip, URL pattern match) | ✅ PASS |
+| V. Observability | pino used throughout; no `console.log` in production; all errors caught + logged with `err` object | ✅ PASS |
+| VI. DB & Migration Discipline | 7 versioned migration files; idempotent (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`); `created_at`/`updated_at` on all tables | ✅ PASS |
+| VII. WA Gateway Reliability | All outbound via `waOutbox.js`; handlers idempotent via dedup; no memory-unbounded structures | ✅ PASS |
+| VIII. Simplicity & YAGNI | No new dependencies; config cache is in-memory Map (no extra Redis layer); group ack hardcoded (no unnecessary config key) | ✅ PASS |
+
+**Security Requirements**:
+
+| Concern | Control Applied |
+|---|---|
+| SQL injection | Parameterised queries (`$1`, `$2`) in all repositories |
+| Input validation | Phone number regex-stripped; URL platform-checked before DB insert |
+| Hardcoded secrets | None — all credentials via `src/config/env.js` |
+| WA deduplication | `waEventAggregator` deduplicates incoming events before handler |
+
+**Violations**: None. No complexity justification table needed.
 
 ## Project Structure
 
@@ -43,263 +52,199 @@ Bot WhatsApp gateway mendeteksi pesan broadcast tugas media sosial dari grup kli
 ```text
 specs/003-sosmed-task-autoresponse/
 ├── plan.md              ← this file
-├── research.md          ← Phase 0 decisions
-├── data-model.md        ← DDL and migration order
-├── quickstart.md        ← local setup guide
+├── research.md          ← decision log (updated)
+├── data-model.md        ← schema + migrations
+├── quickstart.md        ← dev setup guide
 ├── contracts/
 │   └── wa-message-contract.md   ← inbound/outbound message schemas
-└── tasks.md             ← generated by /speckit.tasks (not yet created)
+└── tasks.md             ← Phase 2 output (from /speckit.tasks)
 ```
 
-### Source Code Changes
+### Source Code (repository root)
 
 ```text
-sql/migrations/
-├── 20260325_001_client_default_sentinel.sql    (NEW)
-├── 20260325_002_create_client_config.sql       (NEW)
-├── 20260325_003_create_operators.sql           (NEW)
-├── 20260325_004_create_operator_registration_sessions.sql  (NEW)
-├── 20260325_005_alter_insta_post_task_columns.sql          (NEW)
-├── 20260325_006_alter_tiktok_post_task_columns.sql         (NEW)
-└── 20260325_007_seed_client_config_defaults.sql            (NEW)
-
-src/repository/
-├── clientConfigRepository.js     (NEW)
-├── operatorRepository.js         (NEW)
-└── operatorRegistrationSessionRepository.js   (NEW)
-
-src/service/
-├── clientConfigService.js        (NEW — in-memory cache + DEFAULT fallback)
-├── operatorRegistrationService.js (NEW — 3-state dialog machine)
-└── waAutoSosmedTaskService.js    (REFACTOR — remove hardcode, add routing, use outbox, add logging)
-
-sql/schema.sql                    (UPDATE — sync with new tables and altered columns)
-
+src/
+├── handler/
+│   └── fetchabsensi/
+│       └── sosmedTask.js          ← MODIFY: main WA message handler (entry point)
+├── service/
+│   ├── waAutoSosmedTaskService.js ← MODIFY: refactor group + DM routing, outbox, pino
+│   ├── clientConfigService.js     ← CREATE: read client_config with 60s in-mem cache
+│   ├── operatorRegistrationService.js  ← CREATE: registration dialog orchestration
+│   └── sosmedBroadcastParser.js   ← CREATE: keyword detection + URL extraction
+├── repository/
+│   ├── clientConfigRepository.js  ← CREATE: DB access for client_config
+│   ├── operatorRepository.js      ← CREATE: DB access for operators
+│   └── operatorSessionRepository.js ← CREATE: DB access for operator_registration_sessions
+├── utils/
+│   └── broadcastMatcher.js        ← CREATE: keyword regex helpers (whole-word, case-insensitive)
+sql/
+└── migrations/
+    ├── 20260325_001_client_default_sentinel.sql
+    ├── 20260325_002_create_client_config.sql
+    ├── 20260325_003_create_operators.sql
+    ├── 20260325_004_create_operator_registration_sessions.sql
+    ├── 20260325_005_alter_insta_post_task_columns.sql
+    ├── 20260325_006_alter_tiktok_post_task_columns.sql
+    └── 20260325_007_seed_client_config_defaults.sql
 tests/
-├── clientConfigRepository.test.js              (NEW)
-├── operatorRepository.test.js                  (NEW)
-├── operatorRegistrationSessionRepository.test.js (NEW)
-├── clientConfigService.test.js                 (NEW)
-├── operatorRegistrationService.test.js         (NEW)
-└── waAutoSosmedTaskService.test.js             (UPDATE — extend existing)
+├── sosmedBroadcastParser.test.js  ← unit: keyword + URL extraction
+├── clientConfigService.test.js    ← unit: cache + DB fallback + DEFAULT override
+├── operatorRepository.test.js     ← unit: upsert, findActiveByPhone
+├── operatorSessionRepository.test.js ← unit: create, findActive, delete, purgeExpired
+├── operatorRegistrationService.test.js ← unit: dialog state machine transitions
+└── waAutoSosmedTaskService.test.js ← unit: group path, DM registered path, replay
 ```
 
-## Implementation Phases
-
-### Phase A — Database Layer (foundational, no JS dependencies)
-
-**Deliverables**: 7 migration files in `sql/migrations/`
-
-| Task | File | Details |
-|---|---|---|
-| A1 | `20260325_001_client_default_sentinel.sql` | INSERT `clients(client_id='DEFAULT')` ON CONFLICT DO NOTHING |
-| A2 | `20260325_002_create_client_config.sql` | CREATE TABLE + index on `client_id` |
-| A3 | `20260325_003_create_operators.sql` | CREATE TABLE + indices on `client_id`, `is_active` |
-| A4 | `20260325_004_create_operator_registration_sessions.sql` | CREATE TABLE + index on `expires_at`; includes `first_attempt_at` column |
-| A5 | `20260325_005_alter_insta_post_task_columns.sql` | ADD COLUMN `task_source`, `operator_phone` |
-| A6 | `20260325_006_alter_tiktok_post_task_columns.sql` | ADD COLUMN `task_source`, `operator_phone` |
-| A7 | `20260325_007_seed_client_config_defaults.sql` | INSERT 13 DEFAULT config rows ON CONFLICT DO NOTHING |
-| A8 | Update `sql/schema.sql` | Sync canonical schema with all 7 migrations |
+**Structure Decision**: Single-project Node.js ESM. Follows existing `src/` layered structure. All new files fit within existing layer directories \u2014 no new top-level folders needed.
 
 ---
 
-### Phase B — Repository Layer
+## Architecture Overview
 
-**Deliverables**: 3 new repository files in `src/repository/`
+### Message Flow
 
-#### `clientConfigRepository.js`
-
-```js
-// Exports:
-export async function getConfigValue(pool, clientId, configKey)
-  // SELECT config_value FROM client_config WHERE client_id=$1 AND config_key=$2
-  // Returns string or null
-
-export async function getConfigValueWithDefault(pool, clientId, configKey)
-  // Try clientId first; if null, try 'DEFAULT'; return value or null
-
-export async function setConfigValue(pool, clientId, configKey, configValue)
-  // INSERT ... ON CONFLICT DO UPDATE SET config_value, updated_at
+```
+baileysAdapter.js
+  └─ messages.upsert event
+       └─ waEventAggregator (dedup)
+            └─ sosmedTask.js (handler — entry point)
+                 ├─ [status@broadcast] → ignore
+                 ├─ FR-009: markMessageSeen (skip if isReplay)
+                 ├─ isBroadcastMessage() → broadcastMatcher.js
+                 │    ├─ false → ignore / hand off to other handlers
+                 │    └─ true →
+                 │         ├─ isGroup (@g.us)?
+                 │         │    ├─ not registered group → ignore
+                 │         │    └─ registered group →
+                 │         │         ├─ extractUrls() → [igUrls, ttUrls]
+                 │         │         ├─ recordTasksToDb(igUrls, ttUrls, clientId) — insta_post / tiktok_post
+                 │         │         └─ enqueueSend(groupJid, ackText)  ← Response A (hardcoded)
+                 │         └─ isDM (@s.whatsapp.net)?
+                 │              ├─ active registration session? → operatorRegistrationService.handleDialog()
+                 │              │    ├─ stage=awaiting_confirmation → confirm/decline
+                 │              │    └─ stage=awaiting_satker_choice → list / choose / register
+                 │              │         └─ on success: upsertOperator() → DELETE session → replay(originalMsg, isReplay:true)
+                 │              ├─ registered operator? →
+                 │              │    ├─ extractUrls()
+                 │              │    ├─ liveFetchAll(urls) via Promise.allSettled + 8s timeout
+                 │              │    ├─ recordTasksToDb(igUrls, ttUrls, clientId, phone)
+                 │              │    ├─ enqueueSend(dmJid, engagementRecap)   ← Response B
+                 │              │    └─ enqueueSend(dmJid, taskAck)           ← Response C
+                 │              └─ unregistered (no session) →
+                 │                   ├─ INSERT session (PK guard for race condition)
+                 │                   └─ enqueueSend(dmJid, registrationPrompt) ← Response D
 ```
 
-#### `operatorRepository.js`
+### Handler Responsibilities
 
-```js
-// Exports:
-export async function findActiveOperatorByPhone(pool, phoneNumber)
-  // SELECT * FROM operators WHERE phone_number=$1 AND is_active=TRUE
-  // Returns row or null
-
-export async function upsertOperator(pool, phoneNumber, clientId, satkerName)
-  // INSERT ... ON CONFLICT (phone_number) DO UPDATE ...
-  // TODO: deactivateOperator — admin utility, explicitly out-of-scope for this feature (see spec Out-of-Scope section)
-```
-
-#### `operatorRegistrationSessionRepository.js`
-
-```js
-// Exports:
-export async function findActiveSession(pool, phoneNumber)
-  // SELECT * FROM operator_registration_sessions
-  // WHERE phone_number=$1 AND expires_at > NOW()
-  // Returns row or null
-
-export async function upsertSession(pool, phoneNumber, stage, originalMessage, ttlSeconds, cooldownMinutes)
-  // INSERT ... ON CONFLICT (phone_number) DO UPDATE:
-  //   if NOW()-first_attempt_at >= cooldown_interval: reset attempt_count=1, first_attempt_at=NOW()
-  //   else: increment attempt_count+1
-  //   always: SET stage, expires_at=NOW()+ttl, updated_at=NOW()
-
-export async function deleteSession(pool, phoneNumber)
-  // DELETE FROM operator_registration_sessions WHERE phone_number=$1
-
-export async function isRateLimited(pool, phoneNumber, maxAttempts, cooldownMinutes)
-  // Check attempt_count >= maxAttempts AND NOW() - first_attempt_at < cooldown interval
-  // Returns boolean
-
-export async function purgeExpiredSessions(pool)
-  // DELETE WHERE expires_at <= NOW()
-  // Called once at gateway startup in app.js; logs { purged: N } at info level
-```
+| File | Layer | Responsibility |
+|---|---|---| 
+| `sosmedTask.js` | handler | Entry point; routing decision; seen-marking; dedup guard |
+| `waAutoSosmedTaskService.js` | service | Group-path orchestration; DM-path orchestration; live fetch coordination |
+| `sosmedBroadcastParser.js` | service | `isBroadcastMessage(text, config)` → bool; `extractUrls(text)` → `{igUrls, ttUrls}` |
+| `operatorRegistrationService.js` | service | Registration dialog state machine; rate-limit `attempt_count` check (FR-019) |
+| `clientConfigService.js` | service | `getConfig(clientId, key)` → string; in-mem 60s cache with DEFAULT fallback |
+| `broadcastMatcher.js` | utils | Regex builders for whole-word case-insensitive keyword matching |
+| `clientConfigRepository.js` | repository | `findConfig(clientId, key)`, `listAll(clientId)` |
+| `operatorRepository.js` | repository | `findActiveByPhone(phone)`, `upsertOperator(phone, clientId, satkerName)` |
+| `operatorSessionRepository.js` | repository | `findActiveSession(phone)`, `createSession(...)`, `updateSession(...)`, `deleteSession(phone)`, `purgeExpiredSessions()` |
 
 ---
 
-### Phase C — Service Layer
+## Phase 0: Research
 
-**Deliverables**: 2 new service files in `src/service/`
+**Status**: ✅ Complete — see [research.md](research.md)
 
-#### `clientConfigService.js`
-
-```js
-// In-memory cache: Map<`${clientId}:${configKey}`, { value, expiresAt }>
-// TTL: 60 seconds (lazy eviction on read + proactive sweep every 120s via setInterval)
-
-// Exports:
-export async function getConfig(clientId, configKey)
-  // 1. Check cache — return if not expired
-  // 2. Call clientConfigRepository.getConfigValueWithDefault(pool, clientId, configKey)
-  // 3. Store in cache with expiresAt = Date.now() + 60_000
-  // 4. Return value or null
-
-export async function getConfigOrDefault(clientId, configKey, fallback)
-  // Wraps getConfig; returns fallback if null
-  // NOTE: config lookups before an operator has a known client_id MUST use 'DEFAULT' as clientId
-  //       (e.g., operator_unregistered_prompt, operator_satker_list_header, operator_no_satker,
-  //        operator_session_ttl_seconds, operator_registration_max_attempts/cooldown_minutes)
-
-export async function resolveClientIdForGroup(groupJid)
-  // SELECT client_id FROM client_config WHERE config_key='client_group_jid' AND config_value=$1
-  // Fallback: SELECT client_id FROM clients WHERE client_group=$1 AND client_status=TRUE
-```
-
-#### `operatorRegistrationService.js`
-
-Implements the 3-state dialog machine defined in `research.md` Decision 4.
-
-```js
-// Exports:
-export async function handleUnregisteredBroadcast(phoneNumber, rawText, enqueueSend)
-  // 1. cooldownMinutes = parseInt(await getConfig('DEFAULT', 'operator_registration_cooldown_minutes'))
-  // 2. maxAttempts = parseInt(await getConfig('DEFAULT', 'operator_registration_max_attempts'))
-  // 3. Check isRateLimited(pool, phone, maxAttempts, cooldownMinutes) — if yes, log warn and return
-  // 4. ttl = parseInt(await getConfig('DEFAULT', 'operator_session_ttl_seconds'))
-  // 5. upsertSession(phoneNumber, 'awaiting_confirmation', rawText, ttl, cooldownMinutes)
-  // 6. enqueueSend(phoneNumber + '@s.whatsapp.net', { text: await getConfig('DEFAULT', 'operator_unregistered_prompt') })
-
-export async function handleRegistrationDialog(phoneNumber, replyText, enqueueSend, replayBroadcast)
-  // C1 FIX: replayBroadcast is an async callback injected by waAutoSosmedTaskService
-  //         It accepts (originalMessage) and re-runs the group broadcast processing
-  //         This avoids a circular ESM import dependency
-  // 1. findActiveSession(phoneNumber) — if null, treat as new unregistered broadcast
-  // 2. Route by stage:
-  //    - 'awaiting_confirmation':
-  //        ya-tokens: ['ya', 'iya', 'yes', 'y'] (case-insensitive, trimmed)
-  //        tidak-tokens: ['tidak', 'no', 'n', 'tdak', 'tdk']
-  //        match → advance stage; no-match → delete session + send H
-  //    - 'awaiting_satker_choice': validateChoice(replyText) → register or re-prompt
-  //        on success: upsertOperator + deleteSession + send G + await replayBroadcast(session.original_message)
-  //        when client list is empty: send Response J (getConfig('DEFAULT', 'operator_no_satker'))
-```
+Key decisions:
+1. Route by JID suffix (`@g.us` vs `@s.whatsapp.net`)
+2. All outbound via `waOutbox.enqueueSend()`
+3. Config cache: in-memory Map, 60s TTL, DEFAULT fallback
+4. Registration state machine: 3 paths (registered / active session / unregistered)
+5. `first_attempt_at` column added to sessions for FR-019 cooldown window
+6. Task storage: `insta_post`/`tiktok_post` with `task_source='broadcast_wa'`
+7. Constitution alignment: `created_at`/`updated_at` on all new tables
+8. Refactor `waAutoSosmedTaskService.js` in-place
+9. DM path: 2 sequential messages (recap + ack); group path: 1 hardcoded ack
+10. Group ack hardcoded (not from `client_config`) — FR-016 exception documented
+11. One `client_group_jid` per `client_id` — equality check
+12. FR-018 replay: pass `originalMessage` as-is + `isReplay: true` flag
+13. PII logging: full phone number, no masking (internal system)
 
 ---
 
-### Phase D — Refactor `waAutoSosmedTaskService.js`
+## Phase 1: Design
 
-**Deliverable**: Updated `src/service/waAutoSosmedTaskService.js`
+**Status**: ✅ Complete
 
-Changes required (in order of priority):
+### Data Model
+See [data-model.md](data-model.md) — 7 migrations, all idempotent.
 
-| Change | Current state | Target state |
-|---|---|---|
-| Remove hardcoded `AUTO_TASK_CLIENT_ID` | `const AUTO_TASK_CLIENT_ID = 'DITINTELKAM'` | `resolveClientIdForGroup(chatId)` via `clientConfigService` |
-| Route DM vs group | No routing — assumes group | Add `isGroup = chatId.endsWith('@g.us')` check at top of handler |
-| Operator check for DM | Not present | `findActiveOperatorByPhone(senderPhone)` before processing DM broadcast |
-| Unregistered DM routing | Not present | Delegate to `operatorRegistrationService.handleUnregisteredBroadcast()` |
-| Active session routing | Not present | Check `findActiveSession(senderPhone)` → delegate to `handleRegistrationDialog()` |
-| Outbound via outbox | `waClient.sendMessage(chatId, ...)` | `enqueueSend(jid, { text })` from `waOutbox` |
-| Task storage | Writes to `insta_post_khusus` (recap flow) | Also write to `insta_post`/`tiktok_post` with `task_source='broadcast_wa'`, `operator_phone` (task-recording flow, separate from recap) |
-| Logging | No pino logging | `logger.info` for all handler entries; `logger.warn`/`error` for all failures |
+### Contracts
+See [contracts/wa-message-contract.md](contracts/wa-message-contract.md) — **10 outbound response schemas (A–J)**; 3 inbound trigger contracts.
 
-**Handler entry point** (updated signature):
+**Key contract revision** (clarify pass 3):
+- **Response A** (group): hardcoded ack + date + URL count. No engagement data.
+- **Response B** (DM): full engagement recap with per-URL fetch result + participant list.
+- **Response C** (DM): `task_input_ack` from `client_config` with `{client_id}` interpolated.
+- Responses D–J: registration dialog chain (D = prompt, E = satker list, F = success, G = decline, H = invalid choice, I = no satker, J = rate-limited silent).
 
-```js
-export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, senderPhone, messageKey, waClient })
-```
-
-**New flow**:
-
-```
-handleAutoSosmedTaskMessageIfApplicable
-  ├── if chatId === 'status@broadcast' → return (FR-010)
-  ├── if NOT isSosmedTaskBroadcastFormat(text) → return (not a broadcast)
-  ├── await waClient.readMessages([messageKey]) + await setTimeout(1000ms)  ← FR-009 seen-marking
-  ├── logger.info { senderPhone, chatId, isGroup, urls detected }
-  ├── isGroup = chatId.endsWith('@g.us')
-  │
-  ├── [DM path]
-  │   ├── findActiveSession(senderPhone) → if active → handleRegistrationDialog(phone, text, enqueueSend, replayBroadcast)
-  │   ├── findActiveOperatorByPhone(senderPhone) → if registered → recordTasksToDB + enqueueSend(ack)
-  │   └── else → handleUnregisteredBroadcast()
-  │
-  └── [Group path]
-      ├── clientId = resolveClientIdForGroup(chatId)
-      ├── if !clientId → logger.warn + return
-      ├── enqueueSend(chatId, { text: ack })
-      ├── live fetch all URLs (IG + TikTok)
-      ├── recordTasksToDB(urls, clientId, senderPhone, 'broadcast_wa')
-      ├── enqueueSend(chatId, { text: statusSummary })
-      └── enqueueSend(chatId, { text: taskRecap })
-```
-
-**replayBroadcast callback** (injected into `handleRegistrationDialog` to resolve C1 circular import):
-
-```js
-const replayBroadcast = async (originalMessage) => {
-  await handleAutoSosmedTaskMessageIfApplicable({
-    text: originalMessage,
-    chatId: senderPhone + '@s.whatsapp.net',  // DM replay
-    senderPhone,
-    messageKey: null,  // no seen-marking on replay
-    waClient,
-  });
-};
-```
+### Quickstart
+See [quickstart.md](quickstart.md) — 7-step migration sequence, test client config, smoke test instructions.
 
 ---
 
-### Phase E — Tests
+## Phase 2: Tasks
 
-**All new tests must mock external dependencies** (DB pool, `enqueueSend`, API calls).
+**Status**: ⏳ Pending — generate via `/speckit.tasks`
 
-| Test File | What to test |
+See [tasks.md](tasks.md) for implementation tasks (to be generated).
+
+**Anticipated task groupings**:
+- Phase A: Database migrations (7 files)
+- Phase B: Utility + parser layer (`broadcastMatcher.js`, `sosmedBroadcastParser.js`)
+- Phase C: Repository layer (3 new repositories)
+- Phase D: Service layer (`clientConfigService.js`, `operatorRegistrationService.js`, refactor `waAutoSosmedTaskService.js`)
+- Phase E: Handler wiring (`sosmedTask.js`)
+- Phase F: Unit tests (6 test files)
+- Phase G: Integration / smoke test + lint gate
+
+---
+
+## Implementation Notes
+
+### Critical Constraints for Implementors
+
+1. **No live fetch from group path** — `instagramApi.js`/`tiktokApi.js` are never called when `isGroup === true`.
+2. **All outbound via `enqueueSend`** — `waClient.sendMessage()` direct calls must be replaced in `waAutoSosmedTaskService.js`.
+3. **Hardcoded group ack** — do not read this text from `client_config`; format: `Ack! Tugas broadcast sosmed {date} berhasil direkam. {n} URL telah dicatat.`
+4. **`task_input_ack` DM-only** — only interpolate `{client_id}` on DM registered operator path.
+5. **`client_group_jid` equality check** — `incomingJid === configuredJid` (not includes/array check).
+6. **FR-018 replay** — call handler synchronously, pass `{ ...originalMsg }` with `isReplay: true` in context; skip `markMessageSeen` when `isReplay === true`.
+7. **Race condition guard** — catch PG error code `23505` (unique violation) on session INSERT; log `logger.warn`; no duplicate response.
+8. **Session lifecycle** — `DELETE` session row immediately on success or decline (not TTL wait); `purgeExpiredSessions` only cleans unanswered TTL-expired rows.
+9. **Timezone** — `src/db/postgres.js` Pool already configured with `options: '-c timezone=Asia/Jakarta'`; no per-query timezone conversion needed.
+10. **pino logging** — all log calls use `logger.info/warn/error` from `src/utils/logger.js`; phone numbers logged in full (no masking).
+
+### Existing Files to Modify
+
+| File | Change |
 |---|---|
-| `clientConfigRepository.test.js` | `getConfigValue` miss/hit; `getConfigValueWithDefault` DEFAULT fallback; `setConfigValue` upsert |
-| `operatorRepository.test.js` | `findActiveOperatorByPhone` found/not found/inactive; `upsertOperator` insert + conflict update |
-| `operatorRegistrationSessionRepository.test.js` | `findActiveSession` expired vs active; `upsertSession` increment count; `isRateLimited` boundary conditions; `purgeExpiredSessions` |
-| `clientConfigService.test.js` | Cache hit avoids DB call; cache miss triggers DB + stores; TTL expiry forces re-fetch; `getConfigOrDefault` returns fallback |
-| `operatorRegistrationService.test.js` | `handleUnregisteredBroadcast` rate-limit path; `handleRegistrationDialog` confirmation yes/no; choice valid/invalid; `resolveClientIdForGroup` group JID lookup + fallback |
-| `waAutoSosmedTaskService.test.js` | DM registered operator → task recorded, ack sent; DM unregistered → registration triggered; DM active session → dialog routed; Group valid → recap sent; Group unknown JID → silenced; `status@broadcast` → ignored |
+| `src/service/waAutoSosmedTaskService.js` | Add group/DM routing split; replace direct `sendMessage` with `enqueueSend`; remove hardcoded `AUTO_TASK_CLIENT_ID`; add pino logging |
+| `src/handler/fetchabsensi/sosmedTask.js` | Add `isReplay` flag handling; integrate new service functions |
+| `sql/schema.sql` | Add new table definitions to canonical schema (sync with migrations) |
+| `app.js` | Call `purgeExpiredSessions(pool)` once at startup (imported from `operatorSessionRepository.js`); log `{ purged: N }` at `info` level per Constitution V — DB-only call, safe before WA `ready` event |
 
-## Complexity Tracking
+### New Files to Create
 
-No constitution violations. No complexity justification required.
+| File | Purpose |
+|---|---|
+| `src/utils/broadcastMatcher.js` | Whole-word regex helpers |
+| `src/service/sosmedBroadcastParser.js` | Keyword detection + URL extraction |
+| `src/service/clientConfigService.js` | Config cache + DEFAULT fallback |
+| `src/service/operatorRegistrationService.js` | Registration state machine |
+| `src/repository/clientConfigRepository.js` | `client_config` DB access |
+| `src/repository/operatorRepository.js` | `operators` DB access |
+| `src/repository/operatorSessionRepository.js` | `operator_registration_sessions` DB access |
+| `sql/migrations/20260325_001-007_*.sql` | 7 migration files per data-model.md |
+
