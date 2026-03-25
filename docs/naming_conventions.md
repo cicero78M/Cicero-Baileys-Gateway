@@ -22,4 +22,11 @@ This document summarizes the naming style used throughout **Cicero_V2**. Follow 
 - Primary keys use the suffix `_id` to match the entity, such as `user_id` or `client_id`.
 - Add indexes on columns that are frequently queried.
 
+### Deviations
+
+| Table | Deviation | Justification |
+|---|---|---|
+| `operators` | `phone_number VARCHAR(30) PRIMARY KEY` (no `_id` suffix) | Phone number is the stable, unique business key. No surrogate ID is warranted—the phone number is both the lookup key and the natural identity of an operator. |
+| `operator_registration_sessions` | `phone_number VARCHAR(30) PRIMARY KEY` (no `_id` suffix) | Session is keyed by the caller’s phone number; only one active session per number can exist at a time. Using a surrogate key adds no value and complicates the upsert-on-conflict pattern. |
+
 These guidelines may be expanded as needed but serve as the basic reference for adding new modules.

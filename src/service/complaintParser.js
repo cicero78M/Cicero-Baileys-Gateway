@@ -60,8 +60,8 @@ function stripIssuePrefix(line) {
 function normalizeUsername(value) {
   if (!value) return '';
   const normalized = normalizeHandleValue(value);
-  if (normalized) return normalized;
-  return String(value).trim();
+  if (!normalized || normalized.length < 3) return '';
+  return normalized;
 }
 
 export function parseComplaintMessage(text) {

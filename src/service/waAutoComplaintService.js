@@ -1,6 +1,17 @@
 import { parseComplaintMessage } from './complaintParser.js';
 import { triageComplaint } from './complaintTriageService.js';
 import { fetchSocialProfile } from './rapidApiProfileService.js';
+import { enqueueSend } from './waOutbox.js';
+import { logger } from '../utils/logger.js';
+import {
+  buildMismatchConfirmationDM,
+} from './complaintResponseTemplates.js';
+import {
+  setConfirmation,
+  getConfirmation,
+  deleteConfirmation,
+} from './pendingConfirmationStore.js';
+import { updateUserSocialHandle } from '../repository/complaintRepository.js';
 
 function normalizeWhatsAppId(value) {
   if (!value) return '';
@@ -90,18 +101,15 @@ export function shouldHandleComplaintMessage({ text, allowUserMenu, session, sen
   return false;
 }
 
-async function sendComplaintMessages(waClient, { chatId, senderId, triage }) {
-  const throttleMs = Number(process.env.COMPLAINT_RESPONSE_DELAY_MS || 3000);
-  await delay(throttleMs);
-  await waClient.sendMessage(chatId, triage.operatorResponse);
+async function sendComplaintMessages({ chatId, senderId, triage }) {
+  await enqueueSend(chatId, { text: triage.operatorResponse });
 
   const requesterRecipient = normalizeWhatsAppId(senderId || chatId);
   if (!requesterRecipient || requesterRecipient === chatId) {
     return;
   }
 
-  await delay(throttleMs);
-  await waClient.sendMessage(requesterRecipient, triage.adminSummary);
+  await enqueueSend(requesterRecipient, { text: triage.adminSummary });
 }
 
 export async function handleComplaintMessageIfApplicable({
@@ -118,6 +126,14 @@ export async function handleComplaintMessageIfApplicable({
     return false;
   }
 
+  if (typeof waClient?.sendSeen === 'function') {
+    try {
+      await waClient.sendSeen(chatId);
+    } catch (err) {
+      logger.warn({ err, chatId }, 'sendSeen failed');
+    }
+  }
+
   const parsed = parseComplaintMessage(text);
   const dbQuery =
     typeof pool?.query === 'function'
@@ -130,6 +146,70 @@ export async function handleComplaintMessageIfApplicable({
     rapidApi: fetchSocialProfile,
   });
 
-  await sendComplaintMessages(waClient, { chatId, senderId, triage });
+  await sendComplaintMessages({ chatId, senderId, triage });
+
+  // T017: USERNAME_MISMATCH — send DM to reporter + store confirmation session
+  if (triage.diagnosisCode === 'USERNAME_MISMATCH' && senderId) {
+    const senderJid = normalizeWhatsAppId(senderId);
+    const reporter = parsed?.reporter || {};
+    const usernameDb = triage.evidence?.internal?.usernameDb || {};
+    const normalize = (v) => String(v || '').replace(/^@/, '').toLowerCase();
+    const mismatchIg =
+      reporter.igUsername &&
+      normalize(reporter.igUsername) !== normalize(usernameDb.instagram);
+    const platform = mismatchIg ? 'instagram' : 'tiktok';
+    const oldUsername = mismatchIg ? usernameDb.instagram : usernameDb.tiktok;
+    const newUsername = String(
+      mismatchIg ? reporter.igUsername : reporter.tiktokUsername || ''
+    ).replace(/^@/, '');
+    const dmBody = buildMismatchConfirmationDM(triage, parsed);
+    await enqueueSend(senderJid, { text: dmBody });
+    setConfirmation(senderJid, platform, {
+      senderJid,
+      platform,
+      oldUsername: oldUsername || '',
+      newUsername,
+      nrp: reporter.nrp,
+      expiresAt: Date.now() + 15 * 60 * 1000,
+    });
+    logger.info({ senderJid, platform, newUsername }, 'USERNAME_MISMATCH: confirmation DM sent');
+  }
+
+  return true;
+}
+
+// T018: Handle "ya konfirmasi ig/tiktok" DM replies
+export async function handleConfirmationDM(msg, senderId) {
+  // (1) Ignore group messages
+  if (msg?.key?.remoteJid?.endsWith('@g.us')) return false;
+
+  // (2) Extract body and match
+  const body = (msg?.body || '').trim();
+  const match = body.match(/ya konfirmasi (ig|tiktok)/i);
+  if (!match) return false;
+
+  // (3) Resolve platform
+  const platform = match[1].toLowerCase() === 'ig' ? 'instagram' : 'tiktok';
+
+  // (4) Look up confirmation session
+  const senderJid = normalizeWhatsAppId(senderId || msg?.key?.remoteJid || '');
+  const session = getConfirmation(senderJid, platform);
+  if (!session) return false;
+
+  // (5) Update DB via repository (C1: SQL only in repository)
+  await updateUserSocialHandle(session.nrp, platform, session.newUsername);
+
+  // (6) Send success message
+  const platformLabel = platform === 'instagram' ? 'Instagram' : 'TikTok';
+  const successMessage = `✅ Username berhasil diperbarui ke @${session.newUsername} untuk platform ${platformLabel}.`;
+  await enqueueSend(senderJid, { text: successMessage });
+
+  // (7) Remove session
+  deleteConfirmation(senderJid, platform);
+
+  // (8) Log
+  logger.info({ senderJid, platform, newUsername: session.newUsername }, 'Confirmation DM handled: username updated');
+
+  // (9) Return true to signal message was handled
   return true;
 }

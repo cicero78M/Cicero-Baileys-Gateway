@@ -14,15 +14,18 @@ const pool = { query };
 // WhatsApp client using Baileys
 import { createBaileysClient } from "./baileysAdapter.js";
 import { handleIncoming } from "./waEventAggregator.js";
+import { attachWorker } from "./waOutbox.js";
 import {
   logWaServiceDiagnostics,
   checkMessageListenersAttached,
 } from "../utils/waDiagnostics.js";
 
 // Service & Utility Imports
+import { logger } from "../utils/logger.js";
 import * as userModel from "../model/userModel.js";
 import {
   handleComplaintMessageIfApplicable,
+  handleConfirmationDM,
 } from "./waAutoComplaintService.js";
 import { handleAutoSosmedTaskMessageIfApplicable } from "./waAutoSosmedTaskService.js";
 import {
@@ -773,6 +776,14 @@ function wrapSendMessage(client) {
 }
 wrapSendMessage(waClient);
 
+// Adapter that maps BullMQ outbox worker calls to waClient.sendMessage
+const baileysSocketAdapter = {
+  sendText: (jid, text) => waClient.sendMessage(jid, text),
+};
+
+// Guard: attach BullMQ outbox worker exactly once even across reconnects
+let outboxWorkerStarted = false;
+
 /**
  * Wait for all WhatsApp client message queues to be idle (empty and no pending tasks)
  * This ensures all messages have been sent before the caller continues
@@ -844,6 +855,11 @@ waClient.on("disconnected", (reason) => {
 waClient.on("ready", () => {
   clearLogoutAwaitingQr(waClient);
   markClientReady(waClient, "ready");
+  if (!outboxWorkerStarted) {
+    outboxWorkerStarted = true;
+    attachWorker(baileysSocketAdapter);
+    logger.info('WA client ready — outbox worker attached');
+  }
 });
 
 waClient.on("change_state", (state) => {
@@ -910,11 +926,16 @@ export function createHandleMessage(waClient, options = {}) {
       }
     }
 
+    const senderId = msg.author || chatId;
+    const fromGroup = chatId.endsWith('@g.us');
+
+    if (!fromGroup && await handleConfirmationDM(msg, senderId)) return;
+
     const handledComplaint = await handleComplaintMessageIfApplicable({
       text,
       allowUserMenu: false,
       session: null,
-      senderId: msg.author || chatId,
+      senderId,
       chatId,
       waClient,
       pool,
@@ -1049,6 +1070,9 @@ export async function handleGatewayMessage(msg) {
   }
 
   const senderId = msg.author || chatId;
+
+  const fromGroup = chatId.endsWith('@g.us');
+  if (!fromGroup && await handleConfirmationDM(msg, senderId)) return;
 
   const handledComplaint = await handleComplaintMessageIfApplicable({
     text,
