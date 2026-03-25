@@ -237,7 +237,7 @@ The following controls are non-negotiable baseline requirements.
 | SQL safety | Parameterised queries only; no string interpolation |
 | Secrets | Load from `process.env` via `env.js`; never hard-coded |
 | CORS | Restrict `origin` to `env.CORS_ORIGIN`; credentials mode on |
-| Sensitive paths | `sensitivePathGuard` on `/api/health/wa` |
+A| Sensitive paths | `sensitivePathGuard` on `/api/health/wa` |
 | WA deduplication | `waEventAggregator` prevents replay and double-processing |
 
 Security vulnerabilities reported via GitHub Issues MUST receive an acknowledged
