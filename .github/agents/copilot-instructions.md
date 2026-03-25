@@ -1,0 +1,32 @@
+﻿# Cicero-Baileys-Gateway Development Guidelines
+
+Auto-generated from all feature plans. Last updated: 2026-03-25
+
+## Active Technologies
+- Node.js 22, ESM (`"type": "module"`) + `@whiskeysockets/baileys`, `bullmq`, `bottleneck`, `pg`, `pino`, `axios` (001-wa-complaint-autoresponse)
+- PostgreSQL — `"user"` table (PK: `user_id`, social cols: `insta`, `tiktok`); `insta_post` (PK: `shortcode`); `tiktok_post` (PK: `video_id`); `insta_like` (JSONB); `tiktok_comment` (JSONB); `clients` (`client_group` for group JID→clientId) (001-wa-complaint-autoresponse)
+
+- Node.js 20 (ESM modules, `"type": "module"` in package.json) + `@whiskeysockets/baileys` (WA adapter), `bullmq` + `bottleneck` (outbox queue), `ioredis` (Redis), `pg` (PostgreSQL), `axios` (external APIs), `pino` (logger), `jest` (testing) (001-wa-complaint-task-autoresponse)
+
+## Project Structure
+
+```text
+src/
+tests/
+```
+
+## Commands
+
+# Add commands for Node.js 20 (ESM modules, `"type": "module"` in package.json)
+
+## Code Style
+
+Node.js 20 (ESM modules, `"type": "module"` in package.json): Follow standard conventions
+
+## Recent Changes
+- 001-wa-complaint-autoresponse: Added Node.js 22, ESM (`"type": "module"`) + `@whiskeysockets/baileys`, `bullmq`, `bottleneck`, `pg`, `pino`, `axios`
+
+- 001-wa-complaint-task-autoresponse: Added Node.js 20 (ESM modules, `"type": "module"` in package.json) + `@whiskeysockets/baileys` (WA adapter), `bullmq` + `bottleneck` (outbox queue), `ioredis` (Redis), `pg` (PostgreSQL), `axios` (external APIs), `pino` (logger), `jest` (testing)
+
+<!-- MANUAL ADDITIONS START -->
+<!-- MANUAL ADDITIONS END -->

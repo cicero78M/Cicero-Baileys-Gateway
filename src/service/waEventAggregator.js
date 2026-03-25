@@ -22,6 +22,19 @@ function parseMessageDedupTTL() {
 
 const MESSAGE_DEDUP_TTL_MS = parseMessageDedupTTL();
 
+const MAX_DEDUP_ENTRIES = 10_000;
+
+/**
+ * Evict the oldest entry (insertion order) when the Map is at capacity.
+ * Skipped when `key` already exists, because updating an existing entry doesn’t increase size.
+ */
+function evictOldestIfFull(key) {
+  if (seenMessages.size < MAX_DEDUP_ENTRIES) return;
+  if (seenMessages.has(key)) return;
+  const oldestKey = seenMessages.keys().next().value;
+  seenMessages.delete(oldestKey);
+}
+
 // Periodic cleanup of expired entries to prevent memory leak
 function cleanupExpiredMessages() {
   const now = Date.now();
@@ -97,6 +110,7 @@ export function handleIncoming(fromAdapter, msg, handler, options = {}) {
     if (debugLoggingEnabled) {
       console.log(`[WA-EVENT-AGGREGATOR] Allowing replay for message: ${key}`);
     }
+    evictOldestIfFull(key);
     seenMessages.set(key, Date.now());
     invokeHandler();
     return;
@@ -111,6 +125,7 @@ export function handleIncoming(fromAdapter, msg, handler, options = {}) {
   if (debugLoggingEnabled) {
     console.log(`[WA-EVENT-AGGREGATOR] Processing message from ${fromAdapter}: ${key}`);
   }
+  evictOldestIfFull(key);
   seenMessages.set(key, Date.now());
   invokeHandler();
 }
