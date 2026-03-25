@@ -181,13 +181,13 @@ Key decisions:
 See [data-model.md](data-model.md) — 7 migrations, all idempotent.
 
 ### Contracts
-See [contracts/wa-message-contract.md](contracts/wa-message-contract.md) — **10 outbound response schemas (A–J)**; 3 inbound trigger contracts.
+See [contracts/wa-message-contract.md](contracts/wa-message-contract.md) — **9 outbound response schemas (A–I)**; 3 inbound trigger contracts.
 
 **Key contract revision** (clarify pass 3):
 - **Response A** (group): hardcoded ack + date + URL count. No engagement data.
 - **Response B** (DM): full engagement recap with per-URL fetch result + participant list.
 - **Response C** (DM): `task_input_ack` from `client_config` with `{client_id}` interpolated.
-- Responses D–J: registration dialog chain (D = prompt, E = satker list, F = success, G = decline, H = invalid choice, I = no satker, J = rate-limited silent).
+- Responses D–I: registration dialog chain (D = prompt, E = satker list, F = success, G = decline, H = invalid choice, I = no satker).
 
 ### Quickstart
 See [quickstart.md](quickstart.md) — 7-step migration sequence, test client config, smoke test instructions.
