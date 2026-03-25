@@ -185,7 +185,7 @@ These are assembled inside `complaintTriageService` and stored in `triageResult.
 4. Relevance scoring: `score = followers + media_count`; penalize `isPrivate === true`.
 5. Store `{ reportedProfile, dbProfile, moreRelevant: 'reported' | 'db' }` in `triageResult.evidence.mismatch`.
 
-> **CRITICAL — Profile condition reuse (H1)**: The `reportedProfile` returned by this `Promise.all` dual-fetch MUST be passed directly to the GAP-002 profile condition checks (`assessProfileConditions(reportedProfile)`). **No third `mapProviderToSocialProfile` call may be issued for `reportedUsername` in the same triage execution.** The triage call sequence inside `complaintTriageService.triage()` must be: (1) mismatch dual-fetch via `Promise.all`, (2) forward `reportedProfile` to `assessProfileConditions` — bypassing any independent fetch for the same username. Worst-case SC-001 path: 2 calls × 5 000 ms timeout = 10 000 ms ≤ 10 s budget.
+> **CRITICAL — Profile condition reuse (H1)**: The `reportedProfile` returned by this `Promise.all` dual-fetch MUST be passed directly to the GAP-002 profile condition checks (`assessProfileConditions(reportedProfile)`). **No third `mapProviderToSocialProfile` call may be issued for `reportedUsername` in the same triage execution.** The triage call sequence inside `complaintTriageService.triage()` must be: (1) mismatch dual-fetch via `Promise.all`, (2) forward `reportedProfile` to `assessProfileConditions` — bypassing any independent fetch for the same username. Worst-case SC-001 path (parallel via `Promise.all`): max(5 000 ms, 5 000 ms) = 5 000 ms ≤ SC-001 budget — sequential execution forbidden (see T015).
 
 If either call throws, store the error and continue — the mismatch report uses whatever data is available.
 
@@ -197,7 +197,7 @@ If either call throws, store the error and continue — the mismatch report uses
 **Purpose**: In-memory TTL Map storing active username-change confirmation sessions.  
 **Key**: `${senderJid}:${platform}` (e.g., `628123456789@c.us:instagram`)  
 **TTL**: 15 minutes from creation  
-**Max entries**: 1 000 entries (LRU eviction on overflow), consistent with the FR-009 dedup Map cap. Expired entries are also cleaned up eagerly on `get`.
+**Max entries**: 1 000 entries (LRU eviction on overflow) per Constitution VII; deliberately smaller than FR-009's 10 000 given the lower expected volume of simultaneous active confirmation sessions. Expired entries are also cleaned up eagerly on `get`.
 
 ```js
 // Exported interface
@@ -331,7 +331,7 @@ waService.createHandleMessage()
                └── enqueueSend(chatId, { text })
 
            complaintResponseTemplates.buildAdminSummary()
-               └── enqueueSend(senderJid, { text })   [if group message]
+               └── enqueueSend(senderJid, { text })   [only if group message — skip when chatId === senderJid (DM complaint), FR-007 exception]
 
            USERNAME_MISMATCH only:
            complaintResponseTemplates.buildMismatchConfirmationDM()
