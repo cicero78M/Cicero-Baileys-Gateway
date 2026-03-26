@@ -945,7 +945,8 @@ export function createHandleMessage(waClient, options = {}) {
     const handledTaskBroadcast = await handleAutoSosmedTaskMessageIfApplicable({
       text,
       chatId,
-      session: null,
+      senderPhone: senderId,
+      messageKey: msg.key ?? null,
       waClient,
     });
     if (handledTaskBroadcast) return;
@@ -1090,7 +1091,8 @@ export async function handleGatewayMessage(msg) {
   const handledTaskBroadcast = await handleAutoSosmedTaskMessageIfApplicable({
     text,
     chatId,
-    session: null,
+    senderPhone: senderId,
+    messageKey: msg.key ?? null,
     waClient,
   });
   if (handledTaskBroadcast) {

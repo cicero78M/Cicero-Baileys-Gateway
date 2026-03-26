@@ -624,3 +624,64 @@ VALUES
 ON CONFLICT (job_key) DO NOTHING;
 
 -- No additional setup steps required beyond applying this schema.
+
+-- =============================================================================
+-- Feature: 003-sosmed-task-autoresponse
+-- Migrations: 20260325_001 through 20260325_007
+-- =============================================================================
+
+-- client_config: per-client and DEFAULT fallback config key/value pairs
+CREATE TABLE IF NOT EXISTS client_config (
+  id           SERIAL          PRIMARY KEY,
+  client_id    VARCHAR(100)    NOT NULL REFERENCES clients(client_id),
+  config_key   VARCHAR(100)    NOT NULL,
+  config_value TEXT            NOT NULL,
+  description  TEXT,
+  created_at   TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+  UNIQUE (client_id, config_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_client_config_client_id
+  ON client_config (client_id);
+
+-- operators: WA phone number -> client_id + satker_name mapping
+CREATE TABLE IF NOT EXISTS operators (
+  phone_number  VARCHAR(30)   PRIMARY KEY,
+  client_id     VARCHAR(100)  NOT NULL REFERENCES clients(client_id),
+  satker_name   VARCHAR(200)  NOT NULL,
+  registered_at TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  is_active     BOOLEAN       NOT NULL DEFAULT TRUE,
+  created_at    TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_operators_client_id
+  ON operators (client_id);
+CREATE INDEX IF NOT EXISTS idx_operators_is_active
+  ON operators (is_active);
+
+-- operator_registration_sessions: 3-step dialog state machine (no FK to operators)
+CREATE TABLE IF NOT EXISTS operator_registration_sessions (
+  phone_number      VARCHAR(30)   PRIMARY KEY,
+  stage             VARCHAR(30)   NOT NULL,
+  original_message  TEXT          NOT NULL,
+  expires_at        TIMESTAMPTZ   NOT NULL,
+  attempt_count     SMALLINT      NOT NULL DEFAULT 1,
+  first_attempt_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  created_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_op_sessions_expires_at
+  ON operator_registration_sessions (expires_at);
+
+-- insta_post: add task_source + operator_phone columns
+ALTER TABLE insta_post
+  ADD COLUMN IF NOT EXISTS task_source    VARCHAR(30)  DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS operator_phone VARCHAR(30)  DEFAULT NULL;
+
+-- tiktok_post: add task_source + operator_phone columns
+ALTER TABLE tiktok_post
+  ADD COLUMN IF NOT EXISTS task_source    VARCHAR(30)  DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS operator_phone VARCHAR(30)  DEFAULT NULL;

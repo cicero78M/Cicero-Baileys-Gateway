@@ -1,15 +1,19 @@
 import { jest } from '@jest/globals';
 
-const mockFindClientById = jest.fn();
+//  Mocks 
 const mockFetchSinglePostKhusus = jest.fn();
 const mockFetchAndStoreSingleTiktokPost = jest.fn();
-const mockGenerateSosmedTaskMessage = jest.fn();
-const mockHandleFetchLikesInstagram = jest.fn();
-const mockHandleFetchKomentarTiktokBatch = jest.fn();
-
-jest.unstable_mockModule('../src/service/clientService.js', () => ({
-  findClientById: mockFindClientById,
-}));
+const mockQuery = jest.fn();
+const mockEnqueueSend = jest.fn();
+const mockIsBroadcastMessage = jest.fn();
+const mockExtractUrls = jest.fn();
+const mockFormatDate = jest.fn().mockReturnValue('Senin, 2 Juni 2025');
+const mockResolveClientIdForGroup = jest.fn();
+const mockGetConfigOrDefault = jest.fn();
+const mockFindActiveSession = jest.fn();
+const mockFindActiveOperatorByPhone = jest.fn();
+const mockHandleUnregisteredBroadcast = jest.fn();
+const mockHandleRegistrationDialog = jest.fn();
 
 jest.unstable_mockModule('../src/handler/fetchpost/instaFetchPost.js', () => ({
   fetchSinglePostKhusus: mockFetchSinglePostKhusus,
@@ -19,156 +23,288 @@ jest.unstable_mockModule('../src/handler/fetchpost/tiktokFetchPost.js', () => ({
   fetchAndStoreSingleTiktokPost: mockFetchAndStoreSingleTiktokPost,
 }));
 
-jest.unstable_mockModule('../src/handler/fetchabsensi/sosmedTask.js', () => ({
-  generateSosmedTaskMessage: mockGenerateSosmedTaskMessage,
+jest.unstable_mockModule('../src/db/postgres.js', () => ({
+  query: mockQuery,
 }));
 
-jest.unstable_mockModule('../src/handler/fetchengagement/fetchLikesInstagram.js', () => ({
-  handleFetchLikesInstagram: mockHandleFetchLikesInstagram,
+jest.unstable_mockModule('../src/service/waOutbox.js', () => ({
+  enqueueSend: mockEnqueueSend,
 }));
 
-jest.unstable_mockModule('../src/handler/fetchengagement/fetchCommentTiktok.js', () => ({
-  handleFetchKomentarTiktokBatch: mockHandleFetchKomentarTiktokBatch,
+jest.unstable_mockModule('../src/utils/logger.js', () => ({
+  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
+jest.unstable_mockModule('../src/service/sosmedBroadcastParser.js', () => ({
+  isBroadcastMessage: mockIsBroadcastMessage,
+  extractUrls: mockExtractUrls,
+  formatDate: mockFormatDate,
+}));
+
+jest.unstable_mockModule('../src/service/clientConfigService.js', () => ({
+  resolveClientIdForGroup: mockResolveClientIdForGroup,
+  getConfig: jest.fn(),
+  getConfigOrDefault: mockGetConfigOrDefault,
+}));
+
+jest.unstable_mockModule('../src/repository/operatorRegistrationSessionRepository.js', () => ({
+  findActiveSession: mockFindActiveSession,
+  upsertSession: jest.fn(),
+  deleteSession: jest.fn(),
+  isRateLimited: jest.fn(),
+  purgeExpiredSessions: jest.fn(),
+}));
+
+jest.unstable_mockModule('../src/repository/operatorRepository.js', () => ({
+  findActiveOperatorByPhone: mockFindActiveOperatorByPhone,
+  upsertOperator: jest.fn(),
+}));
+
+jest.unstable_mockModule('../src/service/operatorRegistrationService.js', () => ({
+  handleUnregisteredBroadcast: mockHandleUnregisteredBroadcast,
+  handleRegistrationDialog: mockHandleRegistrationDialog,
+}));
+
+//  Load SUT 
 let handleAutoSosmedTaskMessageIfApplicable;
 
 beforeAll(async () => {
-  ({ handleAutoSosmedTaskMessageIfApplicable } = await import('../src/service/waAutoSosmedTaskService.js'));
+  ({ handleAutoSosmedTaskMessageIfApplicable } = await import(
+    '../src/service/waAutoSosmedTaskService.js'
+  ));
 });
 
 beforeEach(() => {
   jest.clearAllMocks();
 
-  mockFindClientById.mockResolvedValue({ nama: 'Ditintelkam' });
-  mockFetchSinglePostKhusus.mockResolvedValue({ shortcode: 'IG123' });
-  mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ videoId: 'TT123' });
-  mockGenerateSosmedTaskMessage.mockResolvedValue({ text: 'Pesan tugas test' });
+  // Happy-path defaults
+  mockIsBroadcastMessage.mockReturnValue(true);
+  mockExtractUrls.mockReturnValue({
+    igUrls: ['https://instagram.com/p/abc123'],
+    tiktokUrls: [],
+  });
+  mockGetConfigOrDefault.mockResolvedValue('Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
+  mockQuery.mockResolvedValue({ rowCount: 0 });
+  mockEnqueueSend.mockResolvedValue(undefined);
+  mockFetchSinglePostKhusus.mockResolvedValue({ like_count: 99 });
+  mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ comment_count: 42 });
+  mockFindActiveSession.mockResolvedValue(null);
+  mockFindActiveOperatorByPhone.mockResolvedValue(null);
+  mockResolveClientIdForGroup.mockResolvedValue(null);
 });
 
-describe('handleAutoSosmedTaskMessageIfApplicable', () => {
-  test('mendeteksi format "Selamat siang komandan" dan memproses workflow', async () => {
-    const waClient = { sendMessage: jest.fn().mockResolvedValue(undefined) };
-    const text = `Selamat siang komandan\nMohon izin dibantu\nFollow\nSubscribe\nRepost\nhttps://instagram.com/p/abc123`;
+const waClient = () => ({ readMessages: jest.fn().mockResolvedValue(undefined) });
 
+//  STATUS@BROADCAST guard 
+describe('status@broadcast guard', () => {
+  test('returns false immediately for status@broadcast JID', async () => {
     const result = await handleAutoSosmedTaskMessageIfApplicable({
-      text,
-      chatId: 'chat-1',
-      waClient,
+      text: 'any',
+      chatId: 'status@broadcast',
+      senderPhone: '628111',
+      messageKey: null,
+      waClient: waClient(),
     });
+    expect(result).toBe(false);
+    expect(mockEnqueueSend).not.toHaveBeenCalled();
+  });
+});
 
-    expect(result).toBe(true);
-    expect(mockFindClientById).toHaveBeenCalledWith('DITINTELKAM');
-    expect(mockFetchSinglePostKhusus).toHaveBeenCalledWith('https://instagram.com/p/abc123', 'DITINTELKAM');
-    expect(mockGenerateSosmedTaskMessage).toHaveBeenCalledWith('DITINTELKAM', {
-      skipTiktokFetch: true,
-      skipLikesFetch: true,
+//  GROUP PATH 
+describe('group path (@g.us)', () => {
+  const chatId = '1234567890@g.us';
+
+  test('returns false when group has no registered client_id', async () => {
+    mockResolveClientIdForGroup.mockResolvedValue(null);
+    const result = await handleAutoSosmedTaskMessageIfApplicable({
+      text: 'broadcast',
+      chatId,
+      senderPhone: '628111',
+      messageKey: null,
+      waClient: waClient(),
     });
+    expect(result).toBe(false);
+    expect(mockEnqueueSend).not.toHaveBeenCalled();
   });
 
-  test('mendeteksi format "Selamat sore komandan, senior dan RR"', async () => {
-    const waClient = { sendMessage: jest.fn().mockResolvedValue(undefined) };
-    const text =
-      'Selamat sore komandan, senior dan RR\nMohon izin dibantu\nFollow\nSubscribe\nRepost\nhttps://www.tiktok.com/@abc/video/123';
+  test('returns false when message is not broadcast format', async () => {
+    mockResolveClientIdForGroup.mockResolvedValue('CL1');
+    mockIsBroadcastMessage.mockReturnValue(false);
 
     const result = await handleAutoSosmedTaskMessageIfApplicable({
-      text,
-      chatId: 'chat-2',
-      waClient,
+      text: 'random message',
+      chatId,
+      senderPhone: '628111',
+      messageKey: null,
+      waClient: waClient(),
+    });
+    expect(result).toBe(false);
+    expect(mockEnqueueSend).not.toHaveBeenCalled();
+  });
+
+  test('records to DB and sends exactly one ack (Response A) for valid group broadcast', async () => {
+    mockResolveClientIdForGroup.mockResolvedValue('CL1');
+    mockIsBroadcastMessage.mockReturnValue(true);
+    mockExtractUrls.mockReturnValue({ igUrls: ['https://instagram.com/p/abc123'], tiktokUrls: [] });
+
+    const result = await handleAutoSosmedTaskMessageIfApplicable({
+      text: 'pagi mohon izin dibantu like https://instagram.com/p/abc123',
+      chatId,
+      senderPhone: '628111',
+      messageKey: null,
+      waClient: waClient(),
     });
 
     expect(result).toBe(true);
-    expect(mockFetchAndStoreSingleTiktokPost).toHaveBeenCalledWith(
-      'DITINTELKAM',
-      'https://www.tiktok.com/@abc/video/123'
+    expect(mockQuery).toHaveBeenCalledTimes(1); // DB insert for IG URL
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(1); // Response A
+    const [sendChatId, payload] = mockEnqueueSend.mock.calls[0];
+    expect(sendChatId).toBe(chatId);
+    expect(payload.text).toMatch(/Senin, 2 Juni 2025/);
+    expect(payload.text).toMatch(/1 URL/);
+  });
+});
+
+//  DM PATH  active session 
+describe('DM path  active registration session', () => {
+  const chatId = '628111@s.whatsapp.net';
+  const senderPhone = '628111';
+
+  test('delegates to handleRegistrationDialog when session is active', async () => {
+    mockFindActiveSession.mockResolvedValue({ stage: 'awaiting_confirmation', msg: 'orig broadcast' });
+
+    const result = await handleAutoSosmedTaskMessageIfApplicable({
+      text: 'ya',
+      chatId,
+      senderPhone,
+      messageKey: null,
+      waClient: waClient(),
+    });
+
+    expect(result).toBe(true);
+    expect(mockHandleRegistrationDialog).toHaveBeenCalledWith(
+      senderPhone,
+      'ya',
+      mockEnqueueSend,
+      expect.any(Function)
     );
+    expect(mockFindActiveOperatorByPhone).not.toHaveBeenCalled();
+  });
+});
+
+//  DM PATH  registered operator 
+describe('DM path  registered operator', () => {
+  const senderPhone = '628222';
+  const chatId = `${senderPhone}@s.whatsapp.net`;
+  const clientId = 'CL2';
+
+  beforeEach(() => {
+    mockFindActiveOperatorByPhone.mockResolvedValue({ client_id: clientId });
   });
 
-  test('tidak mendeteksi pesan tanpa keyword inti', async () => {
-    const waClient = { sendMessage: jest.fn().mockResolvedValue(undefined) };
-    const text = 'Selamat siang komandan\nTolong bantu engagement hari ini ya.';
+  test('returns false when message is not broadcast format', async () => {
+    mockIsBroadcastMessage.mockReturnValue(false);
 
     const result = await handleAutoSosmedTaskMessageIfApplicable({
-      text,
-      chatId: 'chat-3',
-      waClient,
+      text: 'random',
+      chatId,
+      senderPhone,
+      messageKey: null,
+      waClient: waClient(),
     });
 
     expect(result).toBe(false);
-    expect(mockFindClientById).not.toHaveBeenCalled();
-    expect(mockGenerateSosmedTaskMessage).not.toHaveBeenCalled();
-    expect(waClient.sendMessage).not.toHaveBeenCalled();
+    expect(mockEnqueueSend).not.toHaveBeenCalled();
   });
 
-  test('tetap mendeteksi pesan dengan markdown, bullet, dan zero-width chars', async () => {
-    const waClient = { sendMessage: jest.fn().mockResolvedValue(undefined) };
-    const text =
-      '*Selamat sore komandan*\u200B\n• _Mohon izin dibantu_\n- Follow\n- Subscribe\n- Repost\nhttps://instagram.com/p/markdown123';
+  test('sends Response B (recap) + Response C (ack) for valid DM broadcast', async () => {
+    mockIsBroadcastMessage.mockReturnValue(true);
+    mockExtractUrls.mockReturnValue({
+      igUrls: ['https://instagram.com/p/xyz'],
+      tiktokUrls: ['https://www.tiktok.com/@a/video/123'],
+    });
+    mockFetchSinglePostKhusus.mockResolvedValue({ like_count: 55 });
+    mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ comment_count: 10 });
+    mockGetConfigOrDefault.mockResolvedValue('Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
 
     const result = await handleAutoSosmedTaskMessageIfApplicable({
-      text,
-      chatId: 'chat-4',
-      waClient,
+      text: 'pagi mohon izin dibantu like https://instagram.com/p/xyz https://www.tiktok.com/@a/video/123',
+      chatId,
+      senderPhone,
+      messageKey: { id: 'msgkey1' },
+      waClient: waClient(),
     });
 
     expect(result).toBe(true);
-    expect(mockFetchSinglePostKhusus).toHaveBeenCalledWith('https://instagram.com/p/markdown123', 'DITINTELKAM');
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(2);
+
+    // Response B  recap
+    const [jid1, payload1] = mockEnqueueSend.mock.calls[0];
+    expect(jid1).toBe(chatId);
+    expect(payload1.text).toMatch(/Rekap engagement/);
+
+    // Response C  ack
+    const [jid2, payload2] = mockEnqueueSend.mock.calls[1];
+    expect(jid2).toBe(chatId);
+    expect(payload2.text).toContain(clientId);
   });
 
-  test('ketika format terdeteksi tapi URL IG/TikTok tidak ada, handler tidak memproses workflow berat', async () => {
-    const waClient = { sendMessage: jest.fn().mockResolvedValue(undefined) };
-    const text = 'Selamat siang komandan\nMohon izin dibantu\nFollow\nSubscribe\nRepost';
+  test('DB insert called with senderPhone for registered operator', async () => {
+    mockIsBroadcastMessage.mockReturnValue(true);
+    mockExtractUrls.mockReturnValue({ igUrls: ['https://instagram.com/p/xyz'], tiktokUrls: [] });
+
+    await handleAutoSosmedTaskMessageIfApplicable({
+      text: 'pagi mohon izin dibantu like https://instagram.com/p/xyz',
+      chatId,
+      senderPhone,
+      messageKey: null,
+      waClient: waClient(),
+    });
+
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO insta_post'),
+      [clientId, 'xyz', senderPhone]
+    );
+  });
+});
+
+//  DM PATH  unregistered 
+describe('DM path  unregistered number', () => {
+  const senderPhone = '628333';
+  const chatId = `${senderPhone}@s.whatsapp.net`;
+
+  test('calls handleUnregisteredBroadcast for unregistered broadcast format', async () => {
+    mockIsBroadcastMessage.mockReturnValue(true);
 
     const result = await handleAutoSosmedTaskMessageIfApplicable({
-      text,
-      chatId: 'chat-5',
-      waClient,
+      text: 'pagi mohon izin dibantu like',
+      chatId,
+      senderPhone,
+      messageKey: null,
+      waClient: waClient(),
+    });
+
+    expect(result).toBe(true);
+    expect(mockHandleUnregisteredBroadcast).toHaveBeenCalledWith(
+      senderPhone,
+      'pagi mohon izin dibantu like',
+      mockEnqueueSend
+    );
+  });
+
+  test('returns false and does not call handleUnregisteredBroadcast if not broadcast format', async () => {
+    mockIsBroadcastMessage.mockReturnValue(false);
+
+    const result = await handleAutoSosmedTaskMessageIfApplicable({
+      text: 'just a normal message',
+      chatId,
+      senderPhone,
+      messageKey: null,
+      waClient: waClient(),
     });
 
     expect(result).toBe(false);
-    expect(mockFindClientById).not.toHaveBeenCalled();
-    expect(mockFetchSinglePostKhusus).not.toHaveBeenCalled();
-    expect(mockFetchAndStoreSingleTiktokPost).not.toHaveBeenCalled();
-    expect(mockGenerateSosmedTaskMessage).not.toHaveBeenCalled();
-    expect(mockHandleFetchLikesInstagram).not.toHaveBeenCalled();
-    expect(mockHandleFetchKomentarTiktokBatch).not.toHaveBeenCalled();
-    expect(waClient.sendMessage).not.toHaveBeenCalled();
+    expect(mockHandleUnregisteredBroadcast).not.toHaveBeenCalled();
+    expect(mockEnqueueSend).not.toHaveBeenCalled();
   });
-
-  test('tetap mengirim notifikasi fallback saat dependency awal throw error', async () => {
-    const waClient = { sendMessage: jest.fn().mockResolvedValue(undefined) };
-    const text =
-      'Selamat siang komandan\nMohon izin dibantu\nFollow\nSubscribe\nRepost\nhttps://instagram.com/p/error123';
-
-    mockFindClientById.mockRejectedValue(new Error('DB lookup failed'));
-    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-
-    const result = await handleAutoSosmedTaskMessageIfApplicable({
-      text,
-      chatId: 'chat-6',
-      waClient,
-    });
-
-    expect(result).toBe(true);
-    expect(waClient.sendMessage).toHaveBeenCalledWith(
-      'chat-6',
-      '⚠️ Auto workflow terdeteksi tapi gagal diproses, silakan cek log.'
-    );
-    expect(mockFetchSinglePostKhusus).not.toHaveBeenCalled();
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      '[AUTO-SOSMED-TASK] Workflow gagal diproses:',
-      expect.objectContaining({
-        chatId: 'chat-6',
-        urlSummary: {
-          total: 1,
-          instagram: 1,
-          tiktok: 0,
-        },
-        errorMessage: 'DB lookup failed',
-      })
-    );
-
-    consoleErrorSpy.mockRestore();
-  });
-
 });
