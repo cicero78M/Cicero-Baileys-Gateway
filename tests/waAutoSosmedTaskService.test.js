@@ -84,7 +84,7 @@ beforeEach(() => {
     tiktokUrls: [],
   });
   mockGetConfigOrDefault.mockResolvedValue('Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
-  mockQuery.mockResolvedValue({ rowCount: 0 });
+  mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
   mockEnqueueSend.mockResolvedValue(undefined);
   mockFetchSinglePostKhusus.mockResolvedValue({ like_count: 99 });
   mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ comment_count: 42 });
@@ -237,17 +237,25 @@ describe('DM path  registered operator', () => {
     });
 
     expect(result).toBe(true);
-    expect(mockEnqueueSend).toHaveBeenCalledTimes(2);
+    // Expect 4 messages: fetch sukses, task list, recap, ack
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(4);
 
-    // Response B  recap
-    const [jid1, payload1] = mockEnqueueSend.mock.calls[0];
-    expect(jid1).toBe(chatId);
-    expect(payload1.text).toMatch(/Rekap engagement/);
+    const texts = mockEnqueueSend.mock.calls.map(([, p]) => p.text);
 
-    // Response C  ack
-    const [jid2, payload2] = mockEnqueueSend.mock.calls[1];
-    expect(jid2).toBe(chatId);
-    expect(payload2.text).toContain(clientId);
+    // All sent to the correct JID
+    mockEnqueueSend.mock.calls.forEach(([jid]) => expect(jid).toBe(chatId));
+
+    // Response 3: fetch success
+    expect(texts[0]).toMatch(/Fetch sukses/);
+
+    // Response 4: task list
+    expect(texts[1]).toMatch(/Daftar tugas/);
+
+    // Response 1: engagement recap
+    expect(texts[2]).toMatch(/Rekap engagement/);
+
+    // Response 2: ack contains clientId
+    expect(texts[3]).toContain(clientId);
   });
 
   test('DB insert called with senderPhone for registered operator', async () => {

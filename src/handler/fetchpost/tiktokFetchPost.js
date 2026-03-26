@@ -212,8 +212,8 @@ export async function fetchAndStoreSingleTiktokPost(clientId, videoInput) {
     videoId: postPayload.video_id,
     caption: postPayload.caption,
     createdAt,
-    likeCount,
-    commentCount,
+    like_count: likeCount,
+    comment_count: commentCount,
   };
 }
 
