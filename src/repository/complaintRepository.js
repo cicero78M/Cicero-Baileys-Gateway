@@ -7,7 +7,7 @@
  * When omitted, the global pool (query from ./db.js) is used automatically.
  */
 
-import { query as globalQuery } from './db.js';
+import { query as globalQuery } from '../db/index.js';
 
 function normalizeHandle(value) {
   return String(value || '').trim().replace(/^@/, '').toLowerCase();

@@ -1,6 +1,6 @@
 // src/model/clientModel.js
 
-import { query } from '../repository/db.js';
+import { query } from '../db/index.js';
 
 let parentClientIdColumnSupported;
 

@@ -2,7 +2,7 @@
 // Configuration Session Model - WhatsApp Configuration Management  
 // Handles session state schema helpers and workflow management
 
-import { query } from '../repository/db.js';
+import { query } from '../db/index.js';
 
 /**
  * Session stage definitions for configuration workflow
@@ -293,11 +293,4 @@ export const SessionValidation = {
       errors
     };
   }
-};
-
-// Export all components
-export { 
-  SessionWorkflow, 
-  SessionData, 
-  SessionValidation 
 };

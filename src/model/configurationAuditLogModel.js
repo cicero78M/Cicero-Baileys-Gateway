@@ -2,7 +2,7 @@
 // Configuration Audit Log Model - WhatsApp Configuration Management
 // Handles change tracking and compliance logging
 
-import { query } from '../repository/db.js';
+import { query } from '../db/index.js';
 
 /**
  * Audit action type definitions
@@ -362,13 +362,4 @@ export const AuditLogValidation = {
       errors
     };
   }
-};
-
-// Export all components
-export { 
-  VALID_AUDIT_ACTION_TYPES,
-  AuditLogData,
-  AuditLogQuery,
-  AuditLogAnalysis,
-  AuditLogValidation
 };

@@ -1,4 +1,4 @@
-import { query } from '../repository/db.js';
+import { query } from '../db/index.js';
 
 export async function upsertIgUser(user) {
   if (!user || !user.id) return;

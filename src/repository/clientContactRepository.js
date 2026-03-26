@@ -1,4 +1,4 @@
-import { query } from './db.js';
+import { query } from '../db/index.js';
 
 function splitRecipientField(rawValue) {
   if (Array.isArray(rawValue)) {

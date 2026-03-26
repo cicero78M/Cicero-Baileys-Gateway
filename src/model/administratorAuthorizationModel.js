@@ -2,7 +2,7 @@
 // Administrator Authorization Model - WhatsApp Configuration Management
 // Handles phone number validation and permission management
 
-import { query } from '../repository/db.js';
+import { query } from '../db/index.js';
 
 /**
  * Permission level definitions
@@ -326,13 +326,4 @@ export const AuthorizationValidation = {
       errors
     };
   }
-};
-
-// Export all components
-export { 
-  PERMISSION_LEVELS,
-  PhoneNumberUtils, 
-  PermissionUtils,
-  AuthorizationData,
-  AuthorizationValidation
 };

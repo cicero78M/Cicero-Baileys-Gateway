@@ -1,5 +1,5 @@
 // src/model/instaLikeModel.js
-import { query } from '../repository/db.js';
+import { query } from '../db/index.js';
 import { buildPriorityOrderClause } from '../utils/sqlPriority.js';
 
 const DEFAULT_ACTIVITY_START = '2025-09-01';
