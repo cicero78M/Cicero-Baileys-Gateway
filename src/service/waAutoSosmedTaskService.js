@@ -95,6 +95,44 @@ async function liveFetchAll(igUrls, tiktokUrls, clientId) {
   };
 }
 
+async function getTodayOperatorTaskList(clientId, operatorPhone) {
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+  const [igRes, tikRes] = await Promise.all([
+    query(
+      `SELECT shortcode FROM insta_post
+       WHERE LOWER(client_id) = LOWER($1) AND operator_phone = $2 AND task_source = 'broadcast_wa'
+         AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = $3::date
+       ORDER BY created_at ASC`,
+      [clientId, operatorPhone, today]
+    ),
+    query(
+      `SELECT video_id FROM tiktok_post
+       WHERE LOWER(client_id) = LOWER($1) AND operator_phone = $2 AND task_source = 'broadcast_wa'
+         AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = $3::date
+       ORDER BY created_at ASC`,
+      [clientId, operatorPhone, today]
+    ),
+  ]);
+  return {
+    igShortcodes: igRes.rows.map((r) => r.shortcode),
+    tiktokVideoIds: tikRes.rows.map((r) => r.video_id),
+  };
+}
+
+function buildTaskListText(igShortcodes, tiktokVideoIds, formattedDate) {
+  const parts = [`Daftar tugas sosmed Anda hari ini (${formattedDate}):` ];
+  if (igShortcodes.length) {
+    parts.push(`Instagram (${igShortcodes.length} konten):\n${igShortcodes.map((s) => `  - ${s}`).join('\n')}`);
+  }
+  if (tiktokVideoIds.length) {
+    parts.push(`TikTok (${tiktokVideoIds.length} konten):\n${tiktokVideoIds.map((v) => `  - ${v}`).join('\n')}`);
+  }
+  if (!igShortcodes.length && !tiktokVideoIds.length) {
+    parts.push('(belum ada tugas yang direkam hari ini)');
+  }
+  return parts.join('\n\n');
+}
+
 function buildEngagementRecapText(igResults, tiktokResults, formattedDate) {
   const igLines = igResults.map(({ url, ok, data }) => {
     if (!ok || !data) return `  - ${url} - data tidak tersedia`;
@@ -225,11 +263,29 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
     const formattedDate = formatDate(new Date());
     const { igResults, tiktokResults } = await liveFetchAll(igUrls, tiktokUrls, clientId);
 
-    // Response B
+    // Response 3: fetch success summary
+    const igOk = igResults.filter((r) => r.ok).length;
+    const tiktokOk = tiktokResults.filter((r) => r.ok).length;
+    const fetchParts = [];
+    if (igOk) fetchParts.push(`${igOk} konten Instagram`);
+    if (tiktokOk) fetchParts.push(`${tiktokOk} konten TikTok`);
+    if (fetchParts.length) {
+      await enqueueSend(dmJid, { text: `Fetch sukses: ${fetchParts.join(' dan ')} berhasil diambil dan disimpan.` });
+    }
+
+    // Response 4: today's full task list
+    try {
+      const { igShortcodes, tiktokVideoIds } = await getTodayOperatorTaskList(clientId, phoneNumber);
+      await enqueueSend(dmJid, { text: buildTaskListText(igShortcodes, tiktokVideoIds, formattedDate) });
+    } catch (err) {
+      logger.error({ err, phoneNumber, clientId }, 'waAutoSosmedTask: failed to fetch today task list');
+    }
+
+    // Response 1: engagement recap
     const recapText = buildEngagementRecapText(igResults, tiktokResults, formattedDate);
     await enqueueSend(dmJid, { text: recapText });
 
-    // Response C
+    // Response 2: ack
     const ackTemplate = await getConfigOrDefault(clientId, 'task_input_ack', 'Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
     await enqueueSend(dmJid, { text: ackTemplate.replace('{client_id}', clientId) });
 
