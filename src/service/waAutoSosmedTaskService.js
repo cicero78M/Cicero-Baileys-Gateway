@@ -17,6 +17,32 @@ import { getCommentsByVideoId } from '../model/tiktokCommentModel.js';
 // Pool proxy for repositories
 const _pool = { query: (sql, params) => query(sql, params) };
 
+// FR-021: In-memory operator broadcast rate limit counter
+// Map<phoneNumber, { count, windowStart }> — bounded by O(active operators)
+const _operatorRateLimit = new Map();
+
+function isOperatorRateLimited(phoneNumber, limitPerHour) {
+  const now = Date.now();
+  const windowMs = 60 * 60 * 1000;
+  const entry = _operatorRateLimit.get(phoneNumber);
+  if (!entry || now - entry.windowStart >= windowMs) {
+    _operatorRateLimit.set(phoneNumber, { count: 1, windowStart: now });
+    return false;
+  }
+  if (entry.count >= limitPerHour) return true;
+  entry.count += 1;
+  return false;
+}
+
+// Evict stale rate-limit entries to prevent unbounded Map growth (constitution §VII)
+setInterval(() => {
+  const now = Date.now();
+  const windowMs = 60 * 60 * 1000;
+  for (const [k, v] of _operatorRateLimit) {
+    if (now - v.windowStart >= windowMs) _operatorRateLimit.delete(k);
+  }
+}, 60 * 60 * 1000);
+
 // Utility: timeout wrapper
 function withTimeout(promise, ms) {
   return Promise.race([
@@ -165,7 +191,9 @@ async function buildEngagementRecapText(igResults, tiktokResults, formattedDate)
         if (usernames.length) {
           partisipanLine = `\n     Partisipan: ${usernames.map((u) => `@${u}`).join(', ')}`;
         }
-      } catch { /* non-fatal */ }
+      } catch (err) {
+        logger.warn({ err, shortcode }, 'waAutoSosmedTask: DB read for IG partisipan failed, omitting');
+      }
     }
     return `  ✅ ${url} — ${likeCount} likes${partisipanLine}`;
   }));
@@ -183,7 +211,9 @@ async function buildEngagementRecapText(igResults, tiktokResults, formattedDate)
         if (comments.length) {
           partisipanLine = `\n     Partisipan: ${comments.map((u) => `@${u}`).join(', ')}`;
         }
-      } catch { /* non-fatal */ }
+      } catch (err) {
+        logger.warn({ err, videoId }, 'waAutoSosmedTask: DB read for TikTok partisipan failed, omitting');
+      }
     }
     return `  ✅ ${url} — ${commentCount} komentar${partisipanLine}`;
   }));
@@ -242,6 +272,12 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
     const { igUrls, tiktokUrls } = extractUrls(text);
     const urlCount = igUrls.length + tiktokUrls.length;
 
+    // Delta 2 (FR-002): zero valid platform URLs → silent ignore, no ack
+    if (urlCount === 0) {
+      logger.warn({ clientId, chatId }, 'waAutoSosmedTask: group broadcast ignored — no valid platform URLs');
+      return false;
+    }
+
     logger.info({ clientId, chatId, igUrls, tiktokUrls }, 'waAutoSosmedTask: group broadcast detected');
 
     try {
@@ -294,7 +330,32 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
       return false;
     }
 
-    const { igUrls, tiktokUrls } = extractUrls(text);
+    // Delta 5 (FR-021): per-operator broadcast rate limit
+    const rateLimitStr = await getConfigOrDefault(clientId, 'operator_broadcast_rate_limit', '20');
+    const rateLimit = parseInt(rateLimitStr, 10);
+    if (isOperatorRateLimited(phoneNumber, rateLimit)) {
+      logger.warn({ phoneNumber, clientId }, 'waAutoSosmedTask: operator broadcast rate limit exceeded, suppressing');
+      return true;
+    }
+
+    // Delta 1 (FR-005.1): URL cap at max 10 per broadcast
+    let { igUrls, tiktokUrls } = extractUrls(text);
+    const totalUrls = igUrls.length + tiktokUrls.length;
+    if (totalUrls > 10) {
+      logger.warn({ phoneNumber, clientId, total: totalUrls }, 'waAutoSosmedTask: URL cap applied, URLs beyond 10 ignored');
+      const allCapped = [...igUrls, ...tiktokUrls].slice(0, 10);
+      igUrls = allCapped.filter((u) => /instagram\.com|ig\.me/i.test(u));
+      tiktokUrls = allCapped.filter((u) => /tiktok\.com/i.test(u));
+    }
+
+    // Delta 3 (FR-006b): zero valid platform URLs → single error reply, no 3-part response
+    if (igUrls.length + tiktokUrls.length === 0) {
+      const noUrlMsg = await getConfigOrDefault(
+        clientId, 'operator_no_valid_url',
+        'Tidak ditemukan URL Instagram atau TikTok dalam pesan Anda.');
+      await enqueueSend(dmJid, { text: noUrlMsg });
+      return true;
+    }
 
     logger.info({ phoneNumber, clientId, igUrls, tiktokUrls }, 'waAutoSosmedTask: DM registered operator');
 

@@ -1,49 +1,44 @@
-# Implementation Plan: WhatsApp Gateway — Auto-Response Fetch Tugas Sosmed
+# Implementation Plan: WhatsApp Gateway — Input Tugas Post Sosmed via Pesan WA
 
-**Branch**: `003-sosmed-task-autoresponse` | **Date**: 2026-03-25 | **Spec**: [spec.md](spec.md)  
-**Input**: Feature specification from `specs/003-sosmed-task-autoresponse/spec.md`
+**Branch**: `003-sosmed-task-autoresponse` | **Date**: 2026-03-26 | **Spec**: [spec.md](spec.md)
+**Input**: Feature specification from `/specs/003-sosmed-task-autoresponse/spec.md`
+
+**Note**: The core service (`waAutoSosmedTaskService.js`) and registration flow (`operatorRegistrationService.js`) were implemented in 5 prior phases. This plan covers the **delta** between that implementation and the clarified spec (FR-021 and FR-002/FR-005/FR-006b edge cases). Only 5 gaps require new code; all design artifacts are complete.
 
 ## Summary
 
-Build an auto-response system that detects WhatsApp broadcast messages containing social media task instructions (like/comment/share, IG/TikTok URLs). Group path records URLs to DB and sends a hardcoded ack. DM path from registered operators performs live fetch engagement via existing `instagramApi.js`/`tiktokApi.js` and sends a full recap. DM from unregistered numbers triggers a 3-step interactive registration dialog, then replays the original broadcast. All new DB state (config, operators, sessions) is PostgreSQL-backed; all outbound messages go through `waOutbox.js` (BullMQ).
+Auto-detect WhatsApp broadcast-format messages containing IG/TikTok URLs, record tasks to PostgreSQL, live-fetch engagement (likes/comments), and reply to registered operators with a 3-message DM sequence (engagement recap → ack → today's task list). Group clients receive a single ack only. Unregistered senders enter a 3-step self-registration dialog; the original broadcast is replayed on completion.
+
+**Delta scope** (clarification pass — 2026-03-26): (1) URL cap at 10 per broadcast, (2) group zero-URL silence, (3) DM zero-URL error response, (4) `logger.warn` on DB read failure in recap, (5) in-memory operator broadcast rate limit (FR-021). Plus one new migration for 2 new config keys.
 
 ## Technical Context
 
-**Language/Version**: Node.js 22 ESM (`import`/`export`)  
-**Primary Dependencies**: Baileys (WA), BullMQ + Redis (outbox), pg (PostgreSQL), pino (logging), Jest (tests)  
-**Storage**: PostgreSQL — new tables `client_config`, `operators`, `operator_registration_sessions`; altered `insta_post` + `tiktok_post`  
-**Testing**: Jest, Node.js v20+; all I/O mocked (no live API or DB calls in tests)  
-**Target Platform**: Linux server (Docker)  
-**Project Type**: WhatsApp auto-response gateway (single-process Node.js service)  
-**Performance Goals**: Group ack ≤ 5s; DM recap ≤ 15s (includes live fetch with 8s timeout per URL)  
-**Constraints**: ESM only; no `console.log` in production paths; BullMQ outbox for all outbound; parameterised SQL only  
-**Scale/Scope**: Single WA client serving all registered group JIDs + DM registration flow
+**Language/Version**: JavaScript — Node.js ≥ 20, ESM (`import`/`export` only; no CommonJS `require`)
+**Primary Dependencies**: `@whiskeysockets/baileys` (WA adapter), `bullmq` + `ioredis` (outbox queue), `pg` (PostgreSQL client), `pino` (logger), `jest` (unit tests)
+**Storage**: PostgreSQL (8 migrations total after delta migration); Redis (BullMQ backing only — no direct key access in this service)
+**Testing**: Jest — `npm test`; all external services mocked; Node.js ≥ 20 required
+**Target Platform**: Linux server; Docker Compose (production), PM2 (bare-metal fallback)
+**Project Type**: WhatsApp auto-response gateway service (single-process, multi-tenant by `client_id`)
+**Performance Goals**: ≤15s DM response best-effort (≤3 URLs, happy path); ≤5s group ack; ≤90s hard cap (worst-case: 10 URLs × 8s per-URL timeout)
+**Constraints**: No `console.log` in production; no CommonJS; no hardcoded credentials; all outbound WA messages via `enqueueSend(jid, { text })`; all SQL parameterized ($1/$2/...); pino logger only
+**Scale/Scope**: Single-process gateway; tens of registered operators; max 10 URLs per broadcast; multi-tenant
 
 ## Constitution Check
 
-*GATE: Must pass before Phase 0 research. Re-checked after Phase 1 design.*
+*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-| Principle | Check | Status |
+| Principle | Status | Notes |
 |---|---|---|
-| I. Layered Architecture | All business logic in `src/service/`; DB in `src/repository/`; handler delegates to service | ✅ PASS |
-| II. Naming Conventions | New files follow `camelCase`; DB columns `snake_case`; boolean helpers prefixed `is`/`has` | ✅ PASS |
-| III. Test Coverage | All new services, repositories, handlers ship with Jest unit tests; no live I/O in tests | ✅ PASS |
-| IV. Security-First | SQL parameterised; no secrets hardcoded; input validated (phone number strip, URL pattern match) | ✅ PASS |
-| V. Observability | pino used throughout; no `console.log` in production; all errors caught + logged with `err` object | ✅ PASS |
-| VI. DB & Migration Discipline | 7 versioned migration files; idempotent (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`); `created_at`/`updated_at` on all tables | ✅ PASS |
-| VII. WA Gateway Reliability | All outbound via `waOutbox.js`; handlers idempotent via dedup; no memory-unbounded structures | ✅ PASS |
-| VIII. Simplicity & YAGNI | No new dependencies; config cache is in-memory Map (no extra Redis layer); group ack hardcoded (no unnecessary config key) | ✅ PASS |
+| Layered architecture (handler → service → repository) | ✅ PASS | `waAutoSosmedTaskService` delegates to repositories and `operatorRegistrationService`; no DB calls from routes or handlers |
+| camelCase JS, snake_case DB | ✅ PASS | All JS identifiers camelCase; all DB column/table names snake_case |
+| ESM (`import`/`export`) | ✅ PASS | All files use ESM; no `require()` present or added |
+| All outbound WA messages via `enqueueSend` | ✅ PASS | Every response uses `enqueueSend(jid, { text })`; no direct `waClient.sendMessage` |
+| Parameterized SQL | ✅ PASS | All queries use `$1, $2, ...` placeholders; no string interpolation in SQL |
+| Pino logger, no `console.log` | ✅ PASS | All log calls use `logger.*`; gap fix adds missing `logger.warn` on DB read failure |
+| Unit tests for every new service/repo function | ✅ PASS | Existing tests pass; delta gaps each require at least one new Jest test case |
+| Memory-unbounded data structures prohibited | ⚠️ JUSTIFIED EXCEPTION | FR-021 uses in-memory `Map` for operator rate-limit — see Complexity Tracking |
 
-**Security Requirements**:
-
-| Concern | Control Applied |
-|---|---|
-| SQL injection | Parameterised queries (`$1`, `$2`) in all repositories |
-| Input validation | Phone number regex-stripped; URL platform-checked before DB insert |
-| Hardcoded secrets | None — all credentials via `src/config/env.js` |
-| WA deduplication | `waEventAggregator` deduplicates incoming events before handler |
-
-**Violations**: None. No complexity justification table needed.
+**Post-design re-check**: All gates pass after Phase 1 design. Exception is justified below.
 
 ## Project Structure
 
@@ -51,200 +46,235 @@ Build an auto-response system that detects WhatsApp broadcast messages containin
 
 ```text
 specs/003-sosmed-task-autoresponse/
-├── plan.md              ← this file
-├── research.md          ← decision log (updated)
-├── data-model.md        ← schema + migrations
-├── quickstart.md        ← dev setup guide
-├── contracts/
-│   └── wa-message-contract.md   ← inbound/outbound message schemas
-└── tasks.md             ← Phase 2 output (from /speckit.tasks)
+├── plan.md              # This file (/speckit.plan command output)
+├── research.md          # Phase 0 output (/speckit.plan command) — 18 decisions
+├── data-model.md        # Phase 1 output (/speckit.plan command) — 8 migrations; 13 DEFAULT rows in Migration 7 + 2 in Migration 8 (009) = 15 total
+├── quickstart.md        # Phase 1 output (/speckit.plan command) — env setup + verify steps
+├── contracts/           # Phase 1 output (/speckit.plan command)
+│   └── wa-message-contract.md   # Responses A–K, inbound contract, delivery rules
+└── tasks.md             # Phase 2 output (/speckit.tasks command — NOT created by /speckit.plan)
 ```
 
 ### Source Code (repository root)
 
 ```text
 src/
-├── handler/
-│   └── fetchabsensi/
-│       └── sosmedTask.js          ← MODIFY: main WA message handler (entry point)
 ├── service/
-│   ├── waAutoSosmedTaskService.js ← MODIFY: refactor group + DM routing, outbox, pino
-│   ├── clientConfigService.js     ← CREATE: read client_config with 60s in-mem cache
-│   ├── operatorRegistrationService.js  ← CREATE: registration dialog orchestration
-│   └── sosmedBroadcastParser.js   ← CREATE: keyword detection + URL extraction
+│   ├── waAutoSosmedTaskService.js        # MODIFY: URL cap, zero-URL paths, FR-021 rate limit, logger.warn
+│   ├── sosmedBroadcastParser.js          # no change
+│   ├── operatorRegistrationService.js    # no change
+│   ├── clientConfigService.js            # no change
+│   └── waOutbox.js                       # no change
 ├── repository/
-│   ├── clientConfigRepository.js  ← CREATE: DB access for client_config
-│   ├── operatorRepository.js      ← CREATE: DB access for operators
-│   └── operatorSessionRepository.js ← CREATE: DB access for operator_registration_sessions
-├── utils/
-│   └── broadcastMatcher.js        ← CREATE: keyword regex helpers (whole-word, case-insensitive)
-sql/
-└── migrations/
-    ├── 20260325_001_client_default_sentinel.sql
-    ├── 20260325_002_create_client_config.sql
-    ├── 20260325_003_create_operators.sql
-    ├── 20260325_004_create_operator_registration_sessions.sql
-    ├── 20260325_005_alter_insta_post_task_columns.sql
-    ├── 20260325_006_alter_tiktok_post_task_columns.sql
-    └── 20260325_007_seed_client_config_defaults.sql
+│   ├── operatorRepository.js             # no change
+│   ├── operatorRegistrationSessionRepository.js  # no change
+│   └── clientConfigRepository.js         # no change
+└── (all other files — no change)
+
+sql/migrations/
+└── 20260326_009_add_operator_rate_limit_config.sql  # NEW: seed 2 new DEFAULT config keys
+
 tests/
-├── sosmedBroadcastParser.test.js  ← unit: keyword + URL extraction
-├── clientConfigService.test.js    ← unit: cache + DB fallback + DEFAULT override
-├── operatorRepository.test.js     ← unit: upsert, findActiveByPhone
-├── operatorSessionRepository.test.js ← unit: create, findActive, delete, purgeExpired
-├── operatorRegistrationService.test.js ← unit: dialog state machine transitions
-└── waAutoSosmedTaskService.test.js ← unit: group path, DM registered path, replay
+└── waAutoSosmedTaskService.test.js  # MODIFY: add 6 new delta test cases (existing tests unchanged)
 ```
 
-**Structure Decision**: Single-project Node.js ESM. Follows existing `src/` layered structure. All new files fit within existing layer directories \u2014 no new top-level folders needed.
+**Structure Decision**: Single-service architecture — all delta changes isolated to one service file and one new migration. No new source files required.
+
+## Complexity Tracking
+
+| Violation | Why Needed | Simpler Alternative Rejected Because |
+|---|---|---|
+| In-memory `Map` for FR-021 operator rate-limit counter | FR-021 requires capping broadcast frequency per registered operator (max 20/hr). Counter must survive intra-session calls but intentionally resets on gateway restart (acceptable — rate limit is a soft guard, not a security control). | **Redis `INCR`/`EXPIRE`**: adds Redis dependency to service logic and requires `ioredis` calls for a trivial guard — disproportionate. **DB column `broadcast_count`**: adds a DB write per processed broadcast (latency) plus a new table/column for a non-critical counter. **`bottleneck` library**: designed for outbound throttle, not inbound rate-limit; adds a dependency. The in-memory `Map` is bounded by the number of registered operators (tens in this deployment) — not unbounded in practice. Entries self-expire after the 60-min window check, keeping Map size O(active operators). |
 
 ---
 
-## Architecture Overview
+## Implementation Phases
 
-### Message Flow
+### Phase 0: Research ✅ COMPLETE
 
-```
-baileysAdapter.js
-  └─ messages.upsert event
-       └─ waEventAggregator (dedup)
-            └─ sosmedTask.js (handler — entry point)
-                 ├─ [status@broadcast] → ignore
-                 ├─ FR-009: markMessageSeen (skip if isReplay)
-                 ├─ isBroadcastMessage() → broadcastMatcher.js
-                 │    ├─ false → ignore / hand off to other handlers
-                 │    └─ true →
-                 │         ├─ isGroup (@g.us)?
-                 │         │    ├─ not registered group → ignore
-                 │         │    └─ registered group →
-                 │         │         ├─ extractUrls() → [igUrls, ttUrls]
-                 │         │         ├─ recordTasksToDb(igUrls, ttUrls, clientId) — insta_post / tiktok_post
-                 │         │         └─ enqueueSend(groupJid, ackText)  ← Response A (hardcoded)
-                 │         └─ isDM (@s.whatsapp.net)?
-                 │              ├─ active registration session? → operatorRegistrationService.handleDialog()
-                 │              │    ├─ stage=awaiting_confirmation → confirm/decline
-                 │              │    └─ stage=awaiting_satker_choice → list / choose / register
-                 │              │         └─ on success: upsertOperator() → DELETE session → replay(originalMsg, isReplay:true)
-                 │              ├─ registered operator? →
-                 │              │    ├─ extractUrls()
-                 │              │    ├─ liveFetchAll(urls) via Promise.allSettled + 8s timeout
-                 │              │    ├─ recordTasksToDb(igUrls, ttUrls, clientId, phone)
-                 │              │    ├─ enqueueSend(dmJid, engagementRecap)   ← Response B
-                 │              │    └─ enqueueSend(dmJid, taskAck)           ← Response C
-                 │              └─ unregistered (no session) →
-                 │                   ├─ INSERT session (PK guard for race condition)
-                 │                   └─ enqueueSend(dmJid, registrationPrompt) ← Response D
-```
+`research.md` contains 18 decisions. All NEEDS CLARIFICATION resolved. Key decisions informing delta implementation:
 
-### Handler Responsibilities
-
-| File | Layer | Responsibility |
-|---|---|---| 
-| `sosmedTask.js` | handler | Entry point; routing decision; seen-marking; dedup guard |
-| `waAutoSosmedTaskService.js` | service | Group-path orchestration; DM-path orchestration; live fetch coordination |
-| `sosmedBroadcastParser.js` | service | `isBroadcastMessage(text, config)` → bool; `extractUrls(text)` → `{igUrls, ttUrls}` |
-| `operatorRegistrationService.js` | service | Registration dialog state machine; rate-limit `attempt_count` check (FR-019) |
-| `clientConfigService.js` | service | `getConfig(clientId, key)` → string; in-mem 60s cache with DEFAULT fallback |
-| `broadcastMatcher.js` | utils | Regex builders for whole-word case-insensitive keyword matching |
-| `clientConfigRepository.js` | repository | `findConfig(clientId, key)`, `listAll(clientId)` |
-| `operatorRepository.js` | repository | `findActiveByPhone(phone)`, `upsertOperator(phone, clientId, satkerName)` |
-| `operatorSessionRepository.js` | repository | `findActiveSession(phone)`, `createSession(...)`, `updateSession(...)`, `deleteSession(phone)`, `purgeExpiredSessions()` |
-
----
-
-## Phase 0: Research
-
-**Status**: ✅ Complete — see [research.md](research.md)
-
-Key decisions:
-1. Route by JID suffix (`@g.us` vs `@s.whatsapp.net`)
-2. All outbound via `waOutbox.enqueueSend()`
-3. Config cache: in-memory Map, 60s TTL, DEFAULT fallback
-4. Registration state machine: 3 paths (registered / active session / unregistered)
-5. `first_attempt_at` column added to sessions for FR-019 cooldown window
-6. Task storage: `insta_post`/`tiktok_post` with `task_source='broadcast_wa'`
-7. Constitution alignment: `created_at`/`updated_at` on all new tables
-8. Refactor `waAutoSosmedTaskService.js` in-place
-9. DM path: 2 sequential messages (recap + ack); group path: 1 hardcoded ack
-10. Group ack hardcoded (not from `client_config`) — FR-016 exception documented
-11. One `client_group_jid` per `client_id` — equality check
-12. FR-018 replay: pass `originalMessage` as-is + `isReplay: true` flag
-13. PII logging: full phone number, no masking (internal system)
-
----
-
-## Phase 1: Design
-
-**Status**: ✅ Complete
-
-### Data Model
-See [data-model.md](data-model.md) — 7 migrations, all idempotent.
-
-### Contracts
-See [contracts/wa-message-contract.md](contracts/wa-message-contract.md) — **9 outbound response schemas (A–I)**; 3 inbound trigger contracts.
-
-**Key contract revision** (clarify pass 3):
-- **Response A** (group): hardcoded ack + date + URL count. No engagement data.
-- **Response B** (DM): full engagement recap with per-URL fetch result + participant list.
-- **Response C** (DM): `task_input_ack` from `client_config` with `{client_id}` interpolated.
-- Responses D–I: registration dialog chain (D = prompt, E = satker list, F = success, G = decline, H = invalid choice, I = no satker).
-
-### Quickstart
-See [quickstart.md](quickstart.md) — 7-step migration sequence, test client config, smoke test instructions.
-
----
-
-## Phase 2: Tasks
-
-**Status**: ⏳ Pending — generate via `/speckit.tasks`
-
-See [tasks.md](tasks.md) for implementation tasks (to be generated).
-
-**Anticipated task groupings**:
-- Phase A: Database migrations (7 files)
-- Phase B: Utility + parser layer (`broadcastMatcher.js`, `sosmedBroadcastParser.js`)
-- Phase C: Repository layer (3 new repositories)
-- Phase D: Service layer (`clientConfigService.js`, `operatorRegistrationService.js`, refactor `waAutoSosmedTaskService.js`)
-- Phase E: Handler wiring (`sosmedTask.js`)
-- Phase F: Unit tests (6 test files)
-- Phase G: Integration / smoke test + lint gate
-
----
-
-## Implementation Notes
-
-### Critical Constraints for Implementors
-
-1. **No live fetch from group path** — `instagramApi.js`/`tiktokApi.js` are never called when `isGroup === true`.
-2. **All outbound via `enqueueSend`** — `waClient.sendMessage()` direct calls must be replaced in `waAutoSosmedTaskService.js`.
-3. **Hardcoded group ack** — do not read this text from `client_config`; format: `Ack! Tugas broadcast sosmed {date} berhasil direkam. {n} URL telah dicatat.`
-4. **`task_input_ack` DM-only** — only interpolate `{client_id}` on DM registered operator path.
-5. **`client_group_jid` equality check** — `incomingJid === configuredJid` (not includes/array check).
-6. **FR-018 replay** — call handler synchronously, pass `{ ...originalMsg }` with `isReplay: true` in context; skip `markMessageSeen` when `isReplay === true`.
-7. **Race condition guard** — catch PG error code `23505` (unique violation) on session INSERT; log `logger.warn`; no duplicate response.
-8. **Session lifecycle** — `DELETE` session row immediately on success or decline (not TTL wait); `purgeExpiredSessions` only cleans unanswered TTL-expired rows.
-9. **Timezone** — `src/db/postgres.js` Pool already configured with `options: '-c timezone=Asia/Jakarta'`; no per-query timezone conversion needed.
-10. **pino logging** — all log calls use `logger.info/warn/error` from `src/utils/logger.js`; phone numbers logged in full (no masking).
-
-### Existing Files to Modify
-
-| File | Change |
+| Decision | Summary |
 |---|---|
-| `src/service/waAutoSosmedTaskService.js` | Add group/DM routing split; replace direct `sendMessage` with `enqueueSend`; remove hardcoded `AUTO_TASK_CLIENT_ID`; add pino logging |
-| `src/handler/fetchabsensi/sosmedTask.js` | Add `isReplay` flag handling; integrate new service functions |
-| `sql/schema.sql` | Add new table definitions to canonical schema (sync with migrations) |
-| `app.js` | Call `purgeExpiredSessions(pool)` once at startup (imported from `operatorSessionRepository.js`); log `{ purged: N }` at `info` level per Constitution V — DB-only call, safe before WA `ready` event |
+| D14 | URL cap: max 10 per broadcast; excess silently ignored + `logger.warn` |
+| D15 | FR-021 rate limit: in-memory `Map<phoneNumber, {count, windowStart}>`; 60-min rolling window; default limit 20 from `client_config` |
+| D16 | Zero-URL handling: DM path → send `operator_no_valid_url`; group path → silent + `logger.warn` |
+| D17 | Session re-hydration: per-message DB query (already implemented correctly in current code) |
+| D18 | DB read failure in recap: show count, omit `Partisipan:` line, call `logger.warn` |
 
-### New Files to Create
+### Phase 1: Design ✅ COMPLETE
 
-| File | Purpose |
-|---|---|
-| `src/utils/broadcastMatcher.js` | Whole-word regex helpers |
-| `src/service/sosmedBroadcastParser.js` | Keyword detection + URL extraction |
-| `src/service/clientConfigService.js` | Config cache + DEFAULT fallback |
-| `src/service/operatorRegistrationService.js` | Registration state machine |
-| `src/repository/clientConfigRepository.js` | `client_config` DB access |
-| `src/repository/operatorRepository.js` | `operators` DB access |
-| `src/repository/operatorSessionRepository.js` | `operator_registration_sessions` DB access |
-| `sql/migrations/20260325_001-007_*.sql` | 7 migration files per data-model.md |
+All design artifacts generated and up to date:
 
+| Artifact | Status | Key Content |
+|---|---|---|
+| `research.md` | ✅ Complete | 18 decisions; D14–D18 added this session |
+| `data-model.md` | ✅ Complete | 8 migrations; 13 DEFAULT config rows in Migration 7 seed + 2 in Migration 8 (009) = 15 total; entities for operators, sessions, client_config |
+| `contracts/wa-message-contract.md` | ✅ Complete | Responses A–K; delivery rules; URL cap note; group zero-URL = silent note |
+| `quickstart.md` | ✅ Complete | Env setup; verify query "15 rows"; smoke test Step 5 |
+
+### Phase 2: Implementation — 6 Delta Items
+
+The core service is already implemented. The following 6 targeted changes bring it to full spec compliance.
+
+---
+
+#### Delta 1 — URL Cap: Max 10 per Broadcast (FR-005 step 1)
+
+**File**: `src/service/waAutoSosmedTaskService.js`
+**Where**: DM registered operator path — after `const { igUrls, tiktokUrls } = extractUrls(text);`
+**Change**: Declare `igUrls`/`tiktokUrls` as `let` instead of `const`. After extraction, if total URL count > 10, cap the combined array at 10 (preserve original IG/TikTok split order) and log `logger.warn`.
+
+```js
+let { igUrls, tiktokUrls } = extractUrls(text);
+const totalUrls = igUrls.length + tiktokUrls.length;
+if (totalUrls > 10) {
+  logger.warn({ phoneNumber, clientId, total: totalUrls },
+    'waAutoSosmedTask: URL cap applied, URLs beyond 10 ignored');
+  const allCapped = [...igUrls, ...tiktokUrls].slice(0, 10);
+  igUrls = allCapped.filter(u => /instagram\.com|ig\.me/i.test(u));
+  tiktokUrls = allCapped.filter(u => /tiktok\.com/i.test(u));
+}
+```
+
+---
+
+#### Delta 2 — Group Zero-URL Silence (FR-002 exception)
+
+**File**: `src/service/waAutoSosmedTaskService.js`
+**Where**: Group path — between `extractUrls(text)` and `recordTasksToDB(...)` call
+**Change**: If `igUrls.length + tiktokUrls.length === 0`, log `logger.warn` and return `false` without sending the ack.
+
+```js
+if (igUrls.length + tiktokUrls.length === 0) {
+  logger.warn({ clientId, chatId },
+    'waAutoSosmedTask: group broadcast with zero valid URLs, suppressing ack');
+  return false;
+}
+```
+
+---
+
+#### Delta 3 — DM Zero-URL Error Response (FR-006b exception)
+
+**File**: `src/service/waAutoSosmedTaskService.js`
+**Where**: DM registered operator path — after URL extraction (and after Delta 1 URL cap), before `recordTasksToDB`
+**Change**: If total URLs === 0, fetch `operator_no_valid_url` from config, send one error message, and return.
+
+```js
+if (igUrls.length + tiktokUrls.length === 0) {
+  const noUrlMsg = await getConfigOrDefault(
+    clientId, 'operator_no_valid_url',
+    'Tidak ditemukan URL Instagram atau TikTok dalam pesan Anda.');
+  await enqueueSend(dmJid, { text: noUrlMsg });
+  return true;
+}
+```
+
+---
+
+#### Delta 4 — DB Read Failure `logger.warn` in Recap (FR-006b)
+
+**File**: `src/service/waAutoSosmedTaskService.js`
+**Where**: `buildEngagementRecapText` function — the two `catch { /* non-fatal */ }` blocks
+**Change**: Replace the silent catches with `logger.warn` calls including the error and relevant ID.
+
+```js
+// IG partisipan catch:
+} catch (err) {
+  logger.warn({ err, shortcode }, 'waAutoSosmedTask: DB read for IG partisipan failed, omitting');
+}
+
+// TikTok partisipan catch:
+} catch (err) {
+  logger.warn({ err, videoId }, 'waAutoSosmedTask: DB read for TikTok partisipan failed, omitting');
+}
+```
+
+---
+
+#### Delta 5 — Operator Broadcast Rate Limit (FR-021)
+
+**File**: `src/service/waAutoSosmedTaskService.js`
+**Where**: Module-level (add Map + helper), then DM registered operator path after broadcast detection
+**Change**: Add module-level in-memory rate limit counter and check before processing.
+
+```js
+// Module-level (near other module-level declarations)
+const _operatorRateLimit = new Map(); // Map<phoneNumber, { count, windowStart }>
+
+function isOperatorRateLimited(phoneNumber, limitPerHour) {
+  const now = Date.now();
+  const windowMs = 60 * 60 * 1000;
+  const entry = _operatorRateLimit.get(phoneNumber);
+  if (!entry || now - entry.windowStart >= windowMs) {
+    _operatorRateLimit.set(phoneNumber, { count: 1, windowStart: now });
+    return false;
+  }
+  if (entry.count >= limitPerHour) return true;
+  entry.count += 1;
+  return false;
+}
+```
+
+```js
+// In DM registered operator path — after isBroadcastMessage() returns true, before URL extraction:
+const rateLimit = parseInt(
+  await getConfigOrDefault(clientId, 'operator_broadcast_rate_limit', '20'), 10);
+if (isOperatorRateLimited(phoneNumber, rateLimit)) {
+  logger.warn({ phoneNumber, clientId },
+    'waAutoSosmedTask: operator broadcast rate limit exceeded, suppressing');
+  return true;
+}
+```
+
+---
+
+#### Delta 6 — Migration: Seed New Config Keys
+
+**File**: `sql/migrations/20260326_009_add_operator_rate_limit_config.sql` *(new file)*
+
+```sql
+-- Migration 009: Add operator broadcast rate limit and no-valid-URL config defaults
+INSERT INTO client_config (client_id, config_key, config_value, description)
+VALUES
+  ('DEFAULT', 'operator_broadcast_rate_limit', '20',
+   'Maks jumlah broadcast per operator terdaftar per jam (window 60 menit bergulir)'),
+  ('DEFAULT', 'operator_no_valid_url',
+   'Tidak ditemukan URL Instagram atau TikTok dalam pesan Anda.',
+   'Pesan error saat broadcast operator terdaftar tidak mengandung URL IG/TikTok valid')
+ON CONFLICT (client_id, config_key) DO NOTHING;
+```
+
+Run via: `node scripts/run_migration.js sql/migrations/20260326_009_add_operator_rate_limit_config.sql`
+
+---
+
+### Phase 3: Test Coverage
+
+Add test cases to `tests/waAutoSosmedTaskService.test.js` for each delta:
+
+| # | Test Description | What to Assert |
+|---|---|---|
+| T1 | **Group broadcast, zero URLs extracted** | `enqueueSend` not called; function returns `false` |
+| T2 | **DM registered operator, zero URLs** | Exactly 1 `enqueueSend` call; text matches `operator_no_valid_url` config value; no second/third message |
+| T3 | **DM registered operator, 12 URLs provided** | `recordTasksToDB` (via `query` spy) called with ≤10 URLs; `logger.warn` called once for URL cap |
+| T4 | **DM registered operator, 21st broadcast in same hour** | After 20 successful calls reset counter, 21st returns `true` with zero `enqueueSend` calls; `logger.warn` called with rate-limit context |
+| T5 | **`buildEngagementRecapText`, IG DB read failure** | `logger.warn` called; recap text still contains `✅ url — N likes`; does not contain `Partisipan:` |
+| T6 | **`buildEngagementRecapText`, TikTok DB read failure** | `logger.warn` called; recap text still contains `✅ url — N komentar`; does not contain `Partisipan:` |
+
+All 13 existing tests must continue to pass unchanged.
+
+---
+
+### Phase 4: Smoke Test Checklist
+
+Verify in dev environment after deploying all 6 delta items:
+
+- [ ] Registered operator sends broadcast with 12 URLs → 3 messages sent; only 10 URLs saved to DB; `logger.warn` in log for URL cap
+- [ ] Registered operator sends broadcast with only non-platform text (no IG/TikTok URLs) → 1 error message sent matching `operator_no_valid_url`; no recap/ack/task-list
+- [ ] Group client receives broadcast with only non-platform text → bot does NOT reply; `logger.warn` in log
+- [ ] Registered operator sends 21 broadcasts within 60 minutes → 21st broadcast: no bot reply; `logger.warn` with "rate limit exceeded" in log
+- [ ] Registered operator broadcasts with API success but DB partisipan query throws → recap delivered with count but no `Partisipan:` line; `logger.warn` in log
+- [ ] `npm test` → all tests pass (≥19 total after 6 new cases)
+- [ ] `npm run lint` → no errors

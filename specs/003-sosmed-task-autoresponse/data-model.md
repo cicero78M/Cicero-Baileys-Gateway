@@ -1,4 +1,4 @@
-# Data Model: WhatsApp Gateway — Auto-Response Fetch Tugas Sosmed
+﻿# Data Model: WhatsApp Gateway — Input Tugas Post Sosmed via Pesan WA
 
 **Feature**: `003-sosmed-task-autoresponse`  
 **Date**: 2026-03-25
@@ -30,6 +30,7 @@ Migrations MUST be applied in this order due to FK dependencies:
 5. 20260325_005_alter_insta_post_task_columns.sql
 6. 20260325_006_alter_tiktok_post_task_columns.sql
 7. 20260325_007_seed_client_config_defaults.sql
+8. 20260326_009_add_operator_rate_limit_config.sql
 ```
 
 ---
@@ -218,6 +219,26 @@ INSERT INTO client_config (client_id, config_key, config_value, description) VAL
    'Ack tugas berhasil direkam')
 ON CONFLICT (client_id, config_key) DO NOTHING;
 ```
+
+**13 rows seeded** — `client_group_jid` dan 2 config key delta (Migration 8) tidak di-seed di sini.
+
+---
+
+### Migration 8: Seed Delta Config Keys (Rate Limit + No-URL Error)
+
+```sql
+-- 20260326_009_add_operator_rate_limit_config.sql
+INSERT INTO client_config (client_id, config_key, config_value, description)
+VALUES
+  ('DEFAULT', 'operator_broadcast_rate_limit', '20',
+   'Maks jumlah broadcast per operator terdaftar per jam (window 60 menit bergulir)'),
+  ('DEFAULT', 'operator_no_valid_url',
+   'Tidak ditemukan URL Instagram atau TikTok dalam pesan Anda.',
+   'Pesan error saat broadcast operator terdaftar tidak mengandung URL IG/TikTok valid')
+ON CONFLICT (client_id, config_key) DO NOTHING;
+```
+
+**2 rows seeded** — delta migration, idempotent. Safe to run on fresh installs (Migration 7 already applied) and after any direct data-model.md seed. After both migrations: **15 DEFAULT config rows** total.
 
 ---
 

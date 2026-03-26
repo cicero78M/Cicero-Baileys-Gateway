@@ -18,6 +18,8 @@ This document defines the inbound message patterns the handler recognises and th
 3. Pesan berisi ≥ 1 kata aksi: `like` | `comment` | `share` | `follow` | `subscribe` | `repost` *(+1 per kata, max +2)*
 4. Pesan berisi ≥ 1 URL Instagram atau TikTok *(+1)*
 
+**URL cap**: Hanya **10 URL pertama** (gabungan IG + TikTok) yang diproses per broadcast; URL ke-11+ diabaikan diam-diam dan dicatat `logger.warn`.
+
 **Example**:
 ```
 Selamat pagi, mohon izin dibantu untuk like dan comment postingan berikut:
@@ -65,7 +67,7 @@ https://www.tiktok.com/@username/video/1234567890
 
 ### Response A — Ack Deteksi Broadcast (grup, hardcoded)
 
-Sent to the group JID immediately upon detecting a valid broadcast. Teks **hardcoded** (tidak dari `client_config`). No live fetch — group path records URLs + sends this ack only.
+Sent to the group JID immediately upon detecting a valid broadcast. Teks **hardcoded** (tidak dari `client_config`). No live fetch — group path records URLs + sends this ack only. **Jika tidak ada URL valid diekstrak: tidak ada respons ke grup (silent; `logger.warn`).**
 
 ```
 Ack! Tugas broadcast sosmed {tanggal panjang} berhasil direkam. {n} URL telah dicatat.
@@ -95,7 +97,7 @@ TikTok ({m} konten):
      Partisipan: @user3, @user4, ...
 ```
 
-*(Diikuti oleh Response C — ack tugas direkam)*
+*(Diikuti oleh Response C — ack tugas direkam, lalu Response J — daftar tugas hari ini)*
 
 ---
 
@@ -108,6 +110,37 @@ Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.
 ```
 
 *(Template from `client_config.task_input_ack` with `{client_id}` replaced)*
+
+---
+
+### Response J — Daftar Tugas Hari Ini (DM ke operator terdaftar, pesan ke-3)
+
+Sent after Response C. Lists all operator tasks for today from `insta_post` and `tiktok_post` with `operator_phone = senderPhone AND task_source = 'broadcast_wa'` for today's date.
+
+```
+Tugas Anda hari ini ({tanggal}):
+
+Instagram:
+  1. https://instagram.com/reel/xxx
+  2. https://instagram.com/reel/yyy
+
+TikTok:
+  1. https://tiktok.com/@u/video/zzz
+```
+
+*(Generated dynamically from DB; not from `client_config`)*
+
+---
+
+### Response K — No Valid URL Error (DM ke operator terdaftar)
+
+Sent when broadcast passes keyword detection but contains **zero IG/TikTok URLs** after extraction (FR-007 filters all URLs). Replaces the 3-part response entirely.
+
+```
+Tidak ditemukan URL Instagram atau TikTok dalam pesan Anda.
+```
+
+*(Template from `client_config.operator_no_valid_url`)*
 
 ---
 
@@ -185,7 +218,8 @@ Tidak ada Satker aktif. Hubungi administrator.
 | Rate limit | 40 msg/min, 350ms min between sends (Bottleneck, enforced by `waOutbox`) |
 | Retry | 5 attempts, exponential backoff from 2s (BullMQ, enforced by `waOutbox`) |
 | Group ack | Response A sent to `@g.us` JID matching `client_group_jid` (equality check); **no live fetch on group path** |
-| DM recap | Response B+C sent to `senderPhone@s.whatsapp.net` for registered operators only |
+| DM recap | Response B+C+J sent to `senderPhone@s.whatsapp.net` for registered operators only (3 messages in order: recap → ack → task list) |
+| DM no URL | Response K sent when no IG/TikTok URLs found in valid broadcast DM |
 | DM responses | Sent to `senderPhone@s.whatsapp.net` |
 | Seen marking | `waClient.readMessages([key])` called before processing, with 1s delay |
 | `status@broadcast` | Always ignored, never processed |

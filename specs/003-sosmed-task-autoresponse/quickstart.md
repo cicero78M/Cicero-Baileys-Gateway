@@ -33,7 +33,7 @@ node scripts/run_migration.js sql/migrations/20260325_007_seed_client_config_def
 Verify:
 
 ```sql
--- Should return 13 rows
+-- Should return 15 rows
 SELECT config_key FROM client_config WHERE client_id = 'DEFAULT';
 
 -- Should return the sentinel
