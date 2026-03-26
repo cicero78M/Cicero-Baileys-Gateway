@@ -13,6 +13,8 @@ Auto-generated from all feature plans. Last updated: 2026-03-26
 - [if applicable, e.g., PostgreSQL, CoreData, files or N/A] (003-sosmed-task-autoresponse)
 - JavaScript — Node.js ≥ 20, ESM (`import`/`export` only; no CommonJS `require`) + `@whiskeysockets/baileys` (WA adapter), `bullmq` + `ioredis` (outbox queue), `pg` (PostgreSQL client), `pino` (logger), `jest` (unit tests) (003-sosmed-task-autoresponse)
 - PostgreSQL (8 migrations total after delta migration); Redis (BullMQ backing only — no direct key access in this service) (003-sosmed-task-autoresponse)
+- Node.js 20+, JavaScript ES2022 (ESM modules) + Express.js, Baileys (WhatsApp), BullMQ, pg (PostgreSQL), redis (004-wa-client-config)
+- PostgreSQL (client configs, sessions, logs), Redis (session state, queuing) (004-wa-client-config)
 
 - Node.js 20 (ESM modules, `"type": "module"` in package.json) + `@whiskeysockets/baileys` (WA adapter), `bullmq` + `bottleneck` (outbox queue), `ioredis` (Redis), `pg` (PostgreSQL), `axios` (external APIs), `pino` (logger), `jest` (testing) (001-wa-complaint-task-autoresponse)
 
@@ -32,9 +34,9 @@ tests/
 Node.js 20 (ESM modules, `"type": "module"` in package.json): Follow standard conventions
 
 ## Recent Changes
+- 004-wa-client-config: Added Node.js 20+, JavaScript ES2022 (ESM modules) + Express.js, Baileys (WhatsApp), BullMQ, pg (PostgreSQL), redis
 - 003-sosmed-task-autoresponse: Added JavaScript — Node.js ≥ 20, ESM (`import`/`export` only; no CommonJS `require`) + `@whiskeysockets/baileys` (WA adapter), `bullmq` + `ioredis` (outbox queue), `pg` (PostgreSQL client), `pino` (logger), `jest` (unit tests)
 - 003-sosmed-task-autoresponse: Added [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION] + [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]
-- 003-sosmed-task-autoresponse: Added Node.js 22 ESM (`import`/`export`) + Baileys (WA), BullMQ + Redis (outbox), pg (PostgreSQL), pino (logging), Jest (tests)
 
 
 <!-- MANUAL ADDITIONS START -->
