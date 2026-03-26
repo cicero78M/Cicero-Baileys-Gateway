@@ -14,6 +14,10 @@ const mockFindActiveSession = jest.fn();
 const mockFindActiveOperatorByPhone = jest.fn();
 const mockHandleUnregisteredBroadcast = jest.fn();
 const mockHandleRegistrationDialog = jest.fn();
+const mockHandleFetchLikesInstagram = jest.fn();
+const mockHandleFetchKomentarTiktokBatch = jest.fn();
+const mockGetLikesByShortcode = jest.fn();
+const mockGetCommentsByVideoId = jest.fn();
 
 jest.unstable_mockModule('../src/handler/fetchpost/instaFetchPost.js', () => ({
   fetchSinglePostKhusus: mockFetchSinglePostKhusus,
@@ -65,6 +69,22 @@ jest.unstable_mockModule('../src/service/operatorRegistrationService.js', () => 
   handleRegistrationDialog: mockHandleRegistrationDialog,
 }));
 
+jest.unstable_mockModule('../src/handler/fetchengagement/fetchLikesInstagram.js', () => ({
+  handleFetchLikesInstagram: mockHandleFetchLikesInstagram,
+}));
+
+jest.unstable_mockModule('../src/handler/fetchengagement/fetchCommentTiktok.js', () => ({
+  handleFetchKomentarTiktokBatch: mockHandleFetchKomentarTiktokBatch,
+}));
+
+jest.unstable_mockModule('../src/model/instaLikeModel.js', () => ({
+  getLikesByShortcode: mockGetLikesByShortcode,
+}));
+
+jest.unstable_mockModule('../src/model/tiktokCommentModel.js', () => ({
+  getCommentsByVideoId: mockGetCommentsByVideoId,
+}));
+
 //  Load SUT 
 let handleAutoSosmedTaskMessageIfApplicable;
 
@@ -87,7 +107,11 @@ beforeEach(() => {
   mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
   mockEnqueueSend.mockResolvedValue(undefined);
   mockFetchSinglePostKhusus.mockResolvedValue({ like_count: 99 });
-  mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ comment_count: 42 });
+  mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ commentCount: 42 });
+  mockHandleFetchLikesInstagram.mockResolvedValue(undefined);
+  mockHandleFetchKomentarTiktokBatch.mockResolvedValue(undefined);
+  mockGetLikesByShortcode.mockResolvedValue([]);
+  mockGetCommentsByVideoId.mockResolvedValue({ comments: [] });
   mockFindActiveSession.mockResolvedValue(null);
   mockFindActiveOperatorByPhone.mockResolvedValue(null);
   mockResolveClientIdForGroup.mockResolvedValue(null);
@@ -218,14 +242,14 @@ describe('DM path  registered operator', () => {
     expect(mockEnqueueSend).not.toHaveBeenCalled();
   });
 
-  test('sends Response B (recap) + Response C (ack) for valid DM broadcast', async () => {
+  test('sends Response B (recap) + Response C (ack) + Response D (task list) for valid DM broadcast', async () => {
     mockIsBroadcastMessage.mockReturnValue(true);
     mockExtractUrls.mockReturnValue({
       igUrls: ['https://instagram.com/p/xyz'],
       tiktokUrls: ['https://www.tiktok.com/@a/video/123'],
     });
     mockFetchSinglePostKhusus.mockResolvedValue({ like_count: 55 });
-    mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ comment_count: 10 });
+    mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ commentCount: 10 });
     mockGetConfigOrDefault.mockResolvedValue('Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
 
     const result = await handleAutoSosmedTaskMessageIfApplicable({
@@ -237,25 +261,26 @@ describe('DM path  registered operator', () => {
     });
 
     expect(result).toBe(true);
-    // Expect 4 messages: fetch sukses, task list, recap, ack
-    expect(mockEnqueueSend).toHaveBeenCalledTimes(4);
+    // Expect 3 messages: recap, ack, task list (no "Fetch sukses")
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(3);
 
     const texts = mockEnqueueSend.mock.calls.map(([, p]) => p.text);
 
     // All sent to the correct JID
     mockEnqueueSend.mock.calls.forEach(([jid]) => expect(jid).toBe(chatId));
 
-    // Response 3: fetch success
-    expect(texts[0]).toMatch(/Fetch sukses/);
-
-    // Response 4: task list
-    expect(texts[1]).toMatch(/Daftar tugas/);
-
-    // Response 1: engagement recap
-    expect(texts[2]).toMatch(/Rekap engagement/);
+    // Response 1: engagement recap with new format header
+    expect(texts[0]).toMatch(/\*Rekap Tugas Sosmed\*/);
 
     // Response 2: ack contains clientId
-    expect(texts[3]).toContain(clientId);
+    expect(texts[1]).toContain(clientId);
+
+    // Response 3: task list
+    expect(texts[2]).toMatch(/Daftar tugas/);
+
+    // Engagement sync handlers were called after post fetch
+    expect(mockHandleFetchLikesInstagram).toHaveBeenCalledWith(null, null, clientId);
+    expect(mockHandleFetchKomentarTiktokBatch).toHaveBeenCalledWith(null, null, clientId);
   });
 
   test('DB insert called with senderPhone for registered operator', async () => {

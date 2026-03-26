@@ -11,6 +11,8 @@ import {
   handleUnregisteredBroadcast,
   handleRegistrationDialog,
 } from './operatorRegistrationService.js';
+import { getLikesByShortcode } from '../model/instaLikeModel.js';
+import { getCommentsByVideoId } from '../model/tiktokCommentModel.js';
 
 // Pool proxy for repositories
 const _pool = { query: (sql, params) => query(sql, params) };
@@ -72,27 +74,44 @@ async function recordTasksToDB(igUrls, tiktokUrls, clientId, operatorPhone) {
 }
 
 async function liveFetchAll(igUrls, tiktokUrls, clientId) {
-  const igPromises = igUrls.map((url) =>
-    withTimeout(fetchSinglePostKhusus(url, clientId), 8000)
-      .then((data) => ({ url, ok: true, data }))
-      .catch(() => ({ url, ok: false, data: null }))
-  );
+  const { handleFetchLikesInstagram } = await import('../handler/fetchengagement/fetchLikesInstagram.js');
+  const { handleFetchKomentarTiktokBatch } = await import('../handler/fetchengagement/fetchCommentTiktok.js');
 
-  const tiktokPromises = tiktokUrls.map((url) =>
-    withTimeout(fetchAndStoreSingleTiktokPost(clientId, url), 8000)
-      .then((data) => ({ url, ok: true, data }))
-      .catch(() => ({ url, ok: false, data: null }))
-  );
+  const igResults = [];
+  for (const url of igUrls) {
+    try {
+      const data = await withTimeout(fetchSinglePostKhusus(url, clientId), 8000);
+      igResults.push({ url, ok: true, data });
+    } catch {
+      igResults.push({ url, ok: false, data: null });
+    }
+  }
+  if (igUrls.length) {
+    try {
+      await handleFetchLikesInstagram(null, null, clientId);
+    } catch (err) {
+      logger.warn({ err, clientId }, 'liveFetchAll: IG engagement sync failed');
+    }
+  }
 
-  const [igSettled, tiktokSettled] = await Promise.all([
-    Promise.allSettled(igPromises),
-    Promise.allSettled(tiktokPromises),
-  ]);
+  const tiktokResults = [];
+  for (const url of tiktokUrls) {
+    try {
+      const data = await withTimeout(fetchAndStoreSingleTiktokPost(clientId, url), 8000);
+      tiktokResults.push({ url, ok: true, data });
+    } catch {
+      tiktokResults.push({ url, ok: false, data: null });
+    }
+  }
+  if (tiktokUrls.length) {
+    try {
+      await handleFetchKomentarTiktokBatch(null, null, clientId);
+    } catch (err) {
+      logger.warn({ err, clientId }, 'liveFetchAll: TikTok engagement sync failed');
+    }
+  }
 
-  return {
-    igResults: igSettled.map((r) => (r.status === 'fulfilled' ? r.value : { url: '', ok: false, data: null })),
-    tiktokResults: tiktokSettled.map((r) => (r.status === 'fulfilled' ? r.value : { url: '', ok: false, data: null })),
-  };
+  return { igResults, tiktokResults };
 }
 
 async function getTodayOperatorTaskList(clientId, operatorPhone) {
@@ -133,18 +152,43 @@ function buildTaskListText(igShortcodes, tiktokVideoIds, formattedDate) {
   return parts.join('\n\n');
 }
 
-function buildEngagementRecapText(igResults, tiktokResults, formattedDate) {
-  const igLines = igResults.map(({ url, ok, data }) => {
-    if (!ok || !data) return `  - ${url} - data tidak tersedia`;
-    return `  - ${url} - ${data.like_count ?? '-'} likes`;
-  });
+async function buildEngagementRecapText(igResults, tiktokResults, formattedDate) {
+  const igLines = await Promise.all(igResults.map(async ({ url, ok, data }) => {
+    if (!ok || !data) return `  ❌ ${url} — data tidak tersedia`;
+    const shortcodeMatch = url.match(/(?:instagram\.com\/(?:p|reel|tv)\/|ig\.me\/p\/)([A-Za-z0-9_-]+)/i);
+    const shortcode = shortcodeMatch?.[1] ?? '';
+    const likeCount = data.like_count ?? '-';
+    let partisipanLine = '';
+    if (shortcode) {
+      try {
+        const usernames = await getLikesByShortcode(shortcode);
+        if (usernames.length) {
+          partisipanLine = `\n     Partisipan: ${usernames.map((u) => `@${u}`).join(', ')}`;
+        }
+      } catch { /* non-fatal */ }
+    }
+    return `  ✅ ${url} — ${likeCount} likes${partisipanLine}`;
+  }));
 
-  const tiktokLines = tiktokResults.map(({ url, ok, data }) => {
-    if (!ok || !data) return `  - ${url} - data tidak tersedia`;
-    return `  - ${url} - ${data.comment_count ?? '-'} komentar`;
-  });
+  const tiktokLines = await Promise.all(tiktokResults.map(async ({ url, ok, data }) => {
+    if (!ok || !data) return `  ❌ ${url} — data tidak tersedia`;
+    const videoIdMatch = url.match(/video\/(\d+)/i);
+    const videoId = videoIdMatch?.[1] ?? '';
+    const commentCount = data.commentCount ?? '-';
+    let partisipanLine = '';
+    if (videoId) {
+      try {
+        const result = await getCommentsByVideoId(videoId);
+        const comments = result?.comments ?? [];
+        if (comments.length) {
+          partisipanLine = `\n     Partisipan: ${comments.map((u) => `@${u}`).join(', ')}`;
+        }
+      } catch { /* non-fatal */ }
+    }
+    return `  ✅ ${url} — ${commentCount} komentar${partisipanLine}`;
+  }));
 
-  const parts = [`Rekap engagement tugas ${formattedDate}:`];
+  const parts = [`*Rekap Tugas Sosmed*\n📅 ${formattedDate}`];
   if (igLines.length) parts.push(`Instagram (${igLines.length} konten):\n${igLines.join('\n')}`);
   if (tiktokLines.length) parts.push(`TikTok (${tiktokLines.length} konten):\n${tiktokLines.join('\n')}`);
 
@@ -263,31 +307,21 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
     const formattedDate = formatDate(new Date());
     const { igResults, tiktokResults } = await liveFetchAll(igUrls, tiktokUrls, clientId);
 
-    // Response 3: fetch success summary
-    const igOk = igResults.filter((r) => r.ok).length;
-    const tiktokOk = tiktokResults.filter((r) => r.ok).length;
-    const fetchParts = [];
-    if (igOk) fetchParts.push(`${igOk} konten Instagram`);
-    if (tiktokOk) fetchParts.push(`${tiktokOk} konten TikTok`);
-    if (fetchParts.length) {
-      await enqueueSend(dmJid, { text: `Fetch sukses: ${fetchParts.join(' dan ')} berhasil diambil dan disimpan.` });
-    }
+    // Response 1: engagement recap (with participants)
+    const recapText = await buildEngagementRecapText(igResults, tiktokResults, formattedDate);
+    await enqueueSend(dmJid, { text: recapText });
 
-    // Response 4: today's full task list
+    // Response 2: ack
+    const ackTemplate = await getConfigOrDefault(clientId, 'task_input_ack', 'Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
+    await enqueueSend(dmJid, { text: ackTemplate.replace('{client_id}', clientId) });
+
+    // Response 3: today's full task list
     try {
       const { igShortcodes, tiktokVideoIds } = await getTodayOperatorTaskList(clientId, phoneNumber);
       await enqueueSend(dmJid, { text: buildTaskListText(igShortcodes, tiktokVideoIds, formattedDate) });
     } catch (err) {
       logger.error({ err, phoneNumber, clientId }, 'waAutoSosmedTask: failed to fetch today task list');
     }
-
-    // Response 1: engagement recap
-    const recapText = buildEngagementRecapText(igResults, tiktokResults, formattedDate);
-    await enqueueSend(dmJid, { text: recapText });
-
-    // Response 2: ack
-    const ackTemplate = await getConfigOrDefault(clientId, 'task_input_ack', 'Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
-    await enqueueSend(dmJid, { text: ackTemplate.replace('{client_id}', clientId) });
 
     return true;
   }
