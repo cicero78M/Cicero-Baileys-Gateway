@@ -55,6 +55,14 @@ describe('isBroadcastMessage', () => {
     expect(isBroadcastMessage(text, defaultConfig)).toBe(false);
   });
 
+  test('returns true when message uses "ijin" spelling (izin/ijin variant)', () => {
+    mockHasAnyKeyword
+      .mockReturnValueOnce(true)   // salam check
+      .mockReturnValueOnce(true);  // action check
+    const text = 'Selamat pagi\nMohon ijin dibantu\nLike\nhttps://instagram.com/p/abc';
+    expect(isBroadcastMessage(text, defaultConfig)).toBe(true);
+  });
+
   test('returns false for empty string', () => {
     expect(isBroadcastMessage('', defaultConfig)).toBe(false);
   });
