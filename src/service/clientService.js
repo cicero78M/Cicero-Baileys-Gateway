@@ -1,11 +1,10 @@
 import axios from 'axios';
 import * as clientModel from '../model/clientModel.js';
 import * as userModel from '../model/userModel.js';
-import * as instaPostService from './instaPostService.js';
-import * as instaLikeService from './instaLikeService.js';
-import * as tiktokPostService from './tiktokPostService.js';
-import * as tiktokCommentService from './tiktokCommentService.js';
-
+import * as instaPostService from '../model/instaPostModel.js';
+import { getLikesByShortcode } from '../model/instaLikeModel.js';
+import * as tiktokPostService from '../model/tiktokPostModel.js';
+import * as tiktokCommentService from '../model/tiktokCommentModel.js';
 
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
 const RAPIDAPI_HOST = 'tiktok-api23.p.rapidapi.com';
@@ -59,7 +58,7 @@ export async function getClientSummary(client_id) {
   const instaPosts = await instaPostService.findByClientId(client_id);
   const instaLikesCounts = await Promise.all(
     instaPosts.map(async (post) => {
-      const like = await instaLikeService.findByShortcode(post.shortcode);
+      const like = await getLikesByShortcode(post.shortcode);
       return Array.isArray(like?.likes) ? like.likes.length : 0;
     })
   );
