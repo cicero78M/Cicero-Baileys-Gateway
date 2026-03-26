@@ -10,12 +10,12 @@ export function buildMismatchConfirmationDM(triageResult, parsed) {
   const igReported = reporter.igUsername || '-';
   const tiktokReported = reporter.tiktokUsername || '-';
 
-  const profileTag = mismatch.moreRelevant === 'reported' ? 'dilaporkan' : 'terdaftar di CICERO';
+  const profileTag = mismatch.moreRelevant === 'reported' ? 'yang dikirim user' : 'terdaftar di CICERO';
   const reportedProfile = mismatch.reportedProfile;
   const dbProfile = mismatch.dbProfile;
 
   const profileSummary = [
-    `Akun dilaporkan: ${igReported !== '-' ? `IG @${stripAt(igReported)}` : `TikTok @${stripAt(tiktokReported)}`}`,
+    `Akun dikirim user: ${igReported !== '-' ? `IG @${stripAt(igReported)}` : `TikTok @${stripAt(tiktokReported)}`}`,
 
     reportedProfile
       ? `  followers: ${reportedProfile.followers_count ?? '-'} | postingan: ${reportedProfile.media_count ?? reportedProfile.posts ?? '-'} | private: ${reportedProfile.isPrivate ? 'ya' : 'tidak'}`
@@ -29,13 +29,13 @@ export function buildMismatchConfirmationDM(triageResult, parsed) {
   return [
     '⚠️ *Konfirmasi Perubahan Username*',
     '',
-    `Username yang Anda laporkan *berbeda* dengan yang terdaftar di CICERO.`,
+    `Username yang Anda kirimkan *berbeda* dengan yang terdaftar di CICERO.`,
     '',
     profileSummary,
     '',
     `Saran: akun yang lebih relevan → *${profileTag}*`,
     '',
-    'Jika Anda ingin memperbarui data CICERO dengan username yang dilaporkan, balas pesan ini dengan:',
+    'Jika Anda ingin memperbarui data CICERO dengan username yang Anda kirimkan, balas pesan ini dengan:',
     '  *ya konfirmasi ig* — untuk update akun Instagram',
     '  *ya konfirmasi tiktok* — untuk update akun TikTok',
     '',
@@ -162,7 +162,7 @@ export function buildOperatorResponse(triageResult, parsed) {
       lines.push(`  TikTok laporan: @${stripAt(parsed.reporter.tiktokUsername)} vs CICERO: @${stripAt(usernameDb.tiktok || '-')}`);
     }
     if (mismatch.moreRelevant) {
-      lines.push(`Akun lebih relevan: ${mismatch.moreRelevant === 'reported' ? 'yang dilaporkan' : 'yang terdaftar CICERO'}`);
+      lines.push(`Akun lebih relevan: ${mismatch.moreRelevant === 'reported' ? 'yang dikirim user' : 'yang terdaftar CICERO'}`);
     }
     lines.push('Langkah cepat:');
     lines.push('1) Samakan username di CICERO dengan akun yang digunakan saat aksi.');
