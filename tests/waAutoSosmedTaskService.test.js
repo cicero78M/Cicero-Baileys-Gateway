@@ -186,7 +186,8 @@ describe('DM path  active registration session', () => {
       senderPhone,
       'ya',
       mockEnqueueSend,
-      expect.any(Function)
+      expect.any(Function),
+      chatId // replyJid = chatId (the actual incoming JID)
     );
     expect(mockFindActiveOperatorByPhone).not.toHaveBeenCalled();
   });
@@ -263,7 +264,7 @@ describe('DM path  registered operator', () => {
 
     expect(mockQuery).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO insta_post'),
-      [clientId, 'xyz', senderPhone]
+      [clientId, 'xyz', senderPhone] // phoneNumber normalised = senderPhone when no suffix
     );
   });
 });
@@ -288,7 +289,8 @@ describe('DM path  unregistered number', () => {
     expect(mockHandleUnregisteredBroadcast).toHaveBeenCalledWith(
       senderPhone,
       'pagi mohon izin dibantu like',
-      mockEnqueueSend
+      mockEnqueueSend,
+      chatId // replyJid = chatId
     );
   });
 
@@ -306,5 +308,75 @@ describe('DM path  unregistered number', () => {
     expect(result).toBe(false);
     expect(mockHandleUnregisteredBroadcast).not.toHaveBeenCalled();
     expect(mockEnqueueSend).not.toHaveBeenCalled();
+  });
+});
+
+//  DM PATH  @newsletter filter
+describe('DM path  @newsletter JID guard', () => {
+  test('returns false immediately for @newsletter JID without any lookup', async () => {
+    const result = await handleAutoSosmedTaskMessageIfApplicable({
+      text: 'pagi mohon ijin dibantu like',
+      chatId: '120363177451408952@newsletter',
+      senderPhone: '120363177451408952@newsletter',
+      messageKey: null,
+      waClient: waClient(),
+    });
+
+    expect(result).toBe(false);
+    expect(mockFindActiveSession).not.toHaveBeenCalled();
+    expect(mockFindActiveOperatorByPhone).not.toHaveBeenCalled();
+    expect(mockEnqueueSend).not.toHaveBeenCalled();
+  });
+});
+
+//  DM PATH  @lid JID normalisation
+describe('DM path  @lid JID normalisation', () => {
+  const lidPhone = '48963281543271';
+  const lidChatId = `${lidPhone}@lid`;
+  const senderPhoneLid = `${lidPhone}@lid`;
+
+  test('strips @lid suffix for session lookup and uses chatId as dmJid for unregistered', async () => {
+    mockIsBroadcastMessage.mockReturnValue(true);
+
+    const result = await handleAutoSosmedTaskMessageIfApplicable({
+      text: 'pagi mohon ijin dibantu like',
+      chatId: lidChatId,
+      senderPhone: senderPhoneLid,
+      messageKey: null,
+      waClient: waClient(),
+    });
+
+    expect(result).toBe(true);
+    // DB lookup should use digits-only, NOT raw @lid JID
+    expect(mockFindActiveSession).toHaveBeenCalledWith(expect.anything(), lidPhone);
+    expect(mockFindActiveOperatorByPhone).toHaveBeenCalledWith(expect.anything(), lidPhone);
+    // Reply JID should be chatId (@lid), not a reconstructed @s.whatsapp.net
+    expect(mockHandleUnregisteredBroadcast).toHaveBeenCalledWith(
+      lidPhone,
+      'pagi mohon ijin dibantu like',
+      mockEnqueueSend,
+      lidChatId
+    );
+  });
+
+  test('strips @lid suffix for session lookup for active session path', async () => {
+    mockFindActiveSession.mockResolvedValue({ stage: 'awaiting_confirmation', msg: 'orig' });
+
+    await handleAutoSosmedTaskMessageIfApplicable({
+      text: 'ya',
+      chatId: lidChatId,
+      senderPhone: senderPhoneLid,
+      messageKey: null,
+      waClient: waClient(),
+    });
+
+    expect(mockFindActiveSession).toHaveBeenCalledWith(expect.anything(), lidPhone);
+    expect(mockHandleRegistrationDialog).toHaveBeenCalledWith(
+      lidPhone,
+      'ya',
+      mockEnqueueSend,
+      expect.any(Function),
+      lidChatId
+    );
   });
 });

@@ -55,9 +55,11 @@ function buildSatkerListText(header, satkers) {
  * @param {string} phoneNumber - sender phone in international format (e.g. "628123456789")
  * @param {string} rawText - original WA message text to be replayed after registration
  * @param {function(string, {text: string}): Promise<void>} enqueueSend
+ * @param {string} [replyJid] - actual JID to reply to; defaults to `${phoneNumber}@s.whatsapp.net`.
+ *   Pass explicitly when the sender's JID differs (e.g. `@lid` users).
  * @returns {Promise<void>}
  */
-export async function handleUnregisteredBroadcast(phoneNumber, rawText, enqueueSend) {
+export async function handleUnregisteredBroadcast(phoneNumber, rawText, enqueueSend, replyJid) {
   const maxAttempts = parseInt(await getConfig('DEFAULT', 'operator_registration_max_attempts') ?? '3', 10);
   const cooldownMinutes = parseInt(await getConfig('DEFAULT', 'operator_registration_cooldown_minutes') ?? '60', 10);
   const ttlSeconds = parseInt(await getConfig('DEFAULT', 'operator_session_ttl_seconds') ?? '3600', 10);
@@ -71,7 +73,8 @@ export async function handleUnregisteredBroadcast(phoneNumber, rawText, enqueueS
   await upsertSession(pool, phoneNumber, 'awaiting_confirmation', rawText, ttlSeconds, cooldownMinutes);
 
   const promptText = await getConfig('DEFAULT', 'operator_unregistered_prompt');
-  await enqueueSend(`${phoneNumber}@s.whatsapp.net`, { text: promptText });
+  const promptJid = replyJid ?? `${phoneNumber}@s.whatsapp.net`;
+  await enqueueSend(promptJid, { text: promptText });
 
   logger.info({ phoneNumber }, 'operatorRegistration: sent D prompt');
 }
@@ -84,16 +87,17 @@ export async function handleUnregisteredBroadcast(phoneNumber, rawText, enqueueS
  * @param {string} replyText - the raw reply text from the user
  * @param {function(string, {text: string}): Promise<void>} enqueueSend
  * @param {function(string): Promise<void>} replayBroadcast - called with original_message on success
+ * @param {string} [replyJid] - actual JID to reply to; defaults to `${phoneNumber}@s.whatsapp.net`.
  * @returns {Promise<void>}
  */
-export async function handleRegistrationDialog(phoneNumber, replyText, enqueueSend, replayBroadcast) {
+export async function handleRegistrationDialog(phoneNumber, replyText, enqueueSend, replayBroadcast, replyJid) {
   const session = await findActiveSession(pool, phoneNumber);
   if (!session) {
     logger.warn({ phoneNumber }, 'operatorRegistration: dialog called but no active session');
     return;
   }
 
-  const jid = `${phoneNumber}@s.whatsapp.net`;
+  const jid = replyJid ?? `${phoneNumber}@s.whatsapp.net`;
 
   if (session.stage === 'awaiting_confirmation') {
     await handleConfirmationReply(phoneNumber, jid, replyText, session, enqueueSend);

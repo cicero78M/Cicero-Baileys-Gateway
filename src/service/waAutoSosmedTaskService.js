@@ -172,25 +172,35 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
   }
 
   // DM PATH
-  const dmJid = `${senderPhone}@s.whatsapp.net`;
+
+  // Filter: newsletter channels are not real 1:1 senders (FR-010 extension)
+  if (chatId.endsWith('@newsletter')) return false;
+
+  // Normalise senderPhone to digits-only for DB lookups.
+  // Baileys may deliver messages with @lid or @s.whatsapp.net suffixes; strip them.
+  const phoneNumber = senderPhone.replace(/@[^@]+$/, '');
+
+  // Reply to the actual incoming chat JID, never to a reconstructed @s.whatsapp.net
+  // (wrong for @lid senders which would produce "xxx@lid@s.whatsapp.net").
+  const dmJid = chatId;
 
   // Active registration session check
-  const session = await findActiveSession(_pool, senderPhone);
+  const session = await findActiveSession(_pool, phoneNumber);
   if (session) {
-    await handleRegistrationDialog(senderPhone, text, enqueueSend, async (originalMessage) => {
+    await handleRegistrationDialog(phoneNumber, text, enqueueSend, async (originalMessage) => {
       await handleAutoSosmedTaskMessageIfApplicable({
         text: originalMessage,
         chatId: dmJid,
-        senderPhone,
+        senderPhone: phoneNumber,
         messageKey: null,
         waClient,
       });
-    });
+    }, dmJid);
     return true;
   }
 
   // Registered operator path
-  const operator = await findActiveOperatorByPhone(_pool, senderPhone);
+  const operator = await findActiveOperatorByPhone(_pool, phoneNumber);
   if (operator) {
     const clientId = operator.client_id;
     const config = await loadBroadcastConfig(clientId);
@@ -200,15 +210,15 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
 
     const { igUrls, tiktokUrls } = extractUrls(text);
 
-    logger.info({ senderPhone, clientId, igUrls, tiktokUrls }, 'waAutoSosmedTask: DM registered operator');
+    logger.info({ phoneNumber, clientId, igUrls, tiktokUrls }, 'waAutoSosmedTask: DM registered operator');
 
     const formattedDate = formatDate(new Date());
     const { igResults, tiktokResults } = await liveFetchAll(igUrls, tiktokUrls, clientId);
 
     try {
-      await recordTasksToDB(igUrls, tiktokUrls, clientId, senderPhone);
+      await recordTasksToDB(igUrls, tiktokUrls, clientId, phoneNumber);
     } catch (err) {
-      logger.error({ err, senderPhone, clientId }, 'waAutoSosmedTask: DM DB insert failed');
+      logger.error({ err, phoneNumber, clientId }, 'waAutoSosmedTask: DM DB insert failed');
     }
 
     // Response B
@@ -228,7 +238,7 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
     return false;
   }
 
-  logger.info({ senderPhone }, 'waAutoSosmedTask: DM unregistered with broadcast format');
-  await handleUnregisteredBroadcast(senderPhone, text, enqueueSend);
+  logger.info({ phoneNumber }, 'waAutoSosmedTask: DM unregistered with broadcast format');
+  await handleUnregisteredBroadcast(phoneNumber, text, enqueueSend, dmJid);
   return true;
 }
