@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+
+# Build and dist directories
+dist/
+build/
+coverage/
+
+# Lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Logs
+*.log
+logs/
+
+# Environment files
+.env*
+
+# Cache directories
+.nyc_output/
+.cache/
+.parcel-cache/
+
+# Runtime and temp files
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.tgz
+*.tar.gz
+
+# Testing coverage
+coverage/
+
+# WhatsApp auth files (project-specific)
+.wwebjs_auth/
+.wwebjs_cache/
+auth_info_baileys/
+auth_info_wwebjs/
+
+# Project-specific directories
+laphar/
+export_data/
+uploads/
+backups/
+
+# Generated/exported files
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.zip
+
+# Editor directories
+.vscode/
+.idea/

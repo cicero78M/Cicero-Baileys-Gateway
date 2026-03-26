@@ -28,6 +28,7 @@ import {
   handleConfirmationDM,
 } from "./waAutoComplaintService.js";
 import { handleAutoSosmedTaskMessageIfApplicable } from "./waAutoSosmedTaskService.js";
+import { waClientConfigHandler } from "../handler/waClientConfigHandler.js";
 import {
   isAdminWhatsApp,
   formatToWhatsAppId,
@@ -931,6 +932,16 @@ export function createHandleMessage(waClient, options = {}) {
 
     if (!fromGroup && await handleConfirmationDM(msg, senderId)) return;
 
+    // Handle client configuration commands (/config, CONFIG, configure)
+    const handledClientConfig = await waClientConfigHandler({
+      sock: waClient,
+      remoteJid: chatId,
+      message: msg,
+      isGroup: fromGroup,
+      quotedInfo: null
+    });
+    if (handledClientConfig) return;
+
     const handledComplaint = await handleComplaintMessageIfApplicable({
       text,
       allowUserMenu: false,
@@ -1074,6 +1085,16 @@ export async function handleGatewayMessage(msg) {
 
   const fromGroup = chatId.endsWith('@g.us');
   if (!fromGroup && await handleConfirmationDM(msg, senderId)) return;
+
+  // Handle client configuration commands (/config, CONFIG, configure)
+  const handledClientConfig = await waClientConfigHandler({
+    sock: waClient,
+    remoteJid: chatId,
+    message: msg,
+    isGroup: fromGroup,
+    quotedInfo: null
+  });
+  if (handledClientConfig) return;
 
   const handledComplaint = await handleComplaintMessageIfApplicable({
     text,
