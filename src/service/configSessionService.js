@@ -2,7 +2,7 @@
 // Configuration Session Service - WhatsApp Configuration Management
 // Session state management and workflow orchestration
 
-import { pool } from '../repository/db.js';
+import { pool } from '../db/index.js';
 import * as configSessionRepo from '../repository/configSessionRepository.js';
 import * as auditLogRepo from '../repository/configurationAuditLogRepository.js';
 import { SessionData, SessionWorkflow, SESSION_STAGES } from '../model/configSessionModel.js';

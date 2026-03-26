@@ -1,5 +1,5 @@
 // src/model/tiktokPostModel.js
-import { query } from '../repository/db.js';
+import { query } from '../db/index.js';
 
 function normalizeClientId(id) {
   return typeof id === "string" ? id.trim().toLowerCase() : id;

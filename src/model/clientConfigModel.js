@@ -2,7 +2,7 @@
 // Client Configuration Model - WhatsApp Configuration Management
 // Handles configuration schema helpers and validation patterns
 
-import { query } from '../repository/db.js';
+import { query } from '../db/index.js';
 
 let configGroupColumnSupported;
 let validationPatternColumnSupported;

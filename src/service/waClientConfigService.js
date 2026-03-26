@@ -12,19 +12,9 @@ import {
   formatConfigurationDisplay,
   hasClientCustomConfiguration
 } from '../service/clientConfigService.js';
-import {
-  createConfigurationSession,
-  getConfigurationSession,
-  updateSessionStage,
-  extendSessionTimeout,
-  hasActiveSession,
-  cleanupExpiredSessions,
-  deleteConfigurationSession
-} from '../service/configSessionService.js';
-import {
-  getAdministratorPermissions,
-  getClientAccessScope
-} from '../repository/administratorAuthorizationRepository.js';
+import { ConfigSessionService } from '../service/configSessionService.js';
+import * as adminAuthRepo from '../repository/administratorAuthorizationRepository.js';
+import { pool } from '../db/index.js';
 import { v4 as uuidv4 } from 'uuid';
 
 // Session constants
@@ -40,10 +30,10 @@ const WARNING_THRESHOLD_MINUTES = 2;
 export async function initiateConfigurationSession(phoneNumber) {
   try {
     // Clean up any expired sessions first
-    await cleanupExpiredSessions();
+    await ConfigSessionService.cleanupExpiredSessions();
     
     // Check if administrator already has an active session
-    const existingSession = await hasActiveSession(phoneNumber);
+    const existingSession = await ConfigSessionService.hasActiveSession(phoneNumber);
     if (existingSession) {
       const timeRemaining = Math.ceil((new Date(existingSession.expires_at) - new Date()) / 60000);
       
@@ -81,7 +71,7 @@ export async function initiateConfigurationSession(phoneNumber) {
     const sessionId = uuidv4();
     const expiresAt = new Date(Date.now() + SESSION_TIMEOUT_MINUTES * 60000);
     
-    const session = await createConfigurationSession({
+    const session = await ConfigSessionService.createSession({
       session_id: sessionId,
       phone_number: phoneNumber,
       client_id: null, // Will be set when client is selected
@@ -134,7 +124,7 @@ export async function initiateConfigurationSession(phoneNumber) {
 export async function processClientSelection(phoneNumber, selection) {
   try {
     // Get current session
-    const session = await getConfigurationSession(phoneNumber);
+    const session = await ConfigSessionService.getActiveSession(phoneNumber);
     if (!session) {
       return {
         success: false,
@@ -183,7 +173,7 @@ export async function processClientSelection(phoneNumber, selection) {
     const isStillActive = currentActiveClients.some(client => client.client_id === selectedClient.client_id);
     
     if (!isStillActive) {
-      await deleteConfigurationSession(session.session_id);
+      await ConfigSessionService.deleteSession(session.session_id);
       return {
         success: false,
         error: 'CLIENT_UNAVAILABLE',
@@ -192,7 +182,7 @@ export async function processClientSelection(phoneNumber, selection) {
     }
     
     // Update session with selected client
-    await updateSessionStage(session.session_id, {
+    await ConfigSessionService.updateSessionStage(session.session_id, {
       client_id: selectedClient.client_id,
       current_stage: 'viewing_config'
     });
@@ -240,7 +230,7 @@ export async function processClientSelection(phoneNumber, selection) {
  */
 export async function processYesNoResponse(phoneNumber, response) {
   try {
-    const session = await getConfigurationSession(phoneNumber);
+    const session = await ConfigSessionService.getActiveSession(phoneNumber);
     if (!session) {
       return {
         success: false,
@@ -251,7 +241,7 @@ export async function processYesNoResponse(phoneNumber, response) {
     
     // Check session timeout
     if (new Date() > new Date(session.expires_at)) {
-      await deleteConfigurationSession(session.session_id);
+      await ConfigSessionService.deleteSession(session.session_id);
       return {
         success: false,
         error: 'SESSION_EXPIRED',
@@ -277,7 +267,7 @@ export async function processYesNoResponse(phoneNumber, response) {
         if (isYes) {
           // User wants to modify configuration - advance to group selection
           // This will be implemented in User Story 3
-          await updateSessionStage(session.session_id, {
+          await ConfigSessionService.updateSessionStage(session.session_id, {
             current_stage: 'selecting_group'
           });
           
@@ -288,7 +278,7 @@ export async function processYesNoResponse(phoneNumber, response) {
           };
         } else {
           // User doesn't want to modify - end session
-          await deleteConfigurationSession(session.session_id);
+          await ConfigSessionService.deleteSession(session.session_id);
           
           return {
             success: true,
@@ -329,7 +319,7 @@ export async function processYesNoResponse(phoneNumber, response) {
  */
 export async function processConfigurationModification(phoneNumber, input) {
   try {
-    const session = await getConfigurationSession(phoneNumber);
+    const session = await ConfigSessionService.getActiveSession(phoneNumber);
     if (!session) {
       return null; // No active session - not our input to handle
     }
@@ -427,7 +417,7 @@ async function formatNoActiveClientsMessage(permissionLevel) {
  */
 export async function handleSessionExtension(phoneNumber) {
   try {
-    const session = await getConfigurationSession(phoneNumber);
+    const session = await ConfigSessionService.getActiveSession(phoneNumber);
     if (!session) {
       return {
         success: false,
@@ -446,7 +436,7 @@ export async function handleSessionExtension(phoneNumber) {
     }
     
     // Extend session
-    const newExpiryTime = await extendSessionTimeout(session.session_id, SESSION_TIMEOUT_MINUTES);
+    const newExpiryTime = await ConfigSessionService.extendSession(session.session_id, SESSION_TIMEOUT_MINUTES);
     
     return {
       success: true,
@@ -475,7 +465,7 @@ export async function handleSessionExtension(phoneNumber) {
  */
 export async function cancelConfigurationSession(phoneNumber) {
   try {
-    const session = await getConfigurationSession(phoneNumber);
+    const session = await ConfigSessionService.getActiveSession(phoneNumber);
     if (!session) {
       return {
         success: false,
@@ -484,7 +474,7 @@ export async function cancelConfigurationSession(phoneNumber) {
       };
     }
     
-    await deleteConfigurationSession(session.session_id);
+    await ConfigSessionService.deleteSession(session.session_id);
     
     logger.info('Configuration session cancelled:', {
       phoneNumber,
@@ -509,4 +499,25 @@ export async function cancelConfigurationSession(phoneNumber) {
       message: 'Session cancellation failed. Please try again.'
     };
   }
+}
+
+// ============= Helper Functions =============
+
+/**
+ * Get administrator permissions from database
+ * @param {string} phoneNumber - Administrator phone number
+ * @returns {Promise<Object|null>} Administrator permissions or null if not found
+ */
+async function getAdministratorPermissions(phoneNumber) {
+  return await adminAuthRepo.getAuthorizationByPhone(pool, phoneNumber);
+}
+
+/**
+ * Get client access scope for administrator
+ * @param {string} phoneNumber - Administrator phone number
+ * @returns {Promise<string[]>} Array of accessible client IDs
+ */
+async function getClientAccessScope(phoneNumber) {
+  const authData = await adminAuthRepo.getAuthorizationByPhone(pool, phoneNumber);
+  return authData?.client_access_scope || [];
 }

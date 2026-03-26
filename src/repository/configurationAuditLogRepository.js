@@ -2,7 +2,7 @@
 // Configuration Audit Log Repository - WhatsApp Configuration Management
 // Audit trail logging and retrieval for compliance and tracking
 
-import { query } from './db.js';
+import { query } from '../db/index.js';
 import { AuditLogValidation, AuditLogQuery, AUDIT_ACTION_TYPES } from '../model/configurationAuditLogModel.js';
 
 /**

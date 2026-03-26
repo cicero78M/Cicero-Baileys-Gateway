@@ -5,7 +5,8 @@
  */
 
 import { logger } from '../utils/logger.js';
-import { isAuthorizedAdministrator } from '../repository/administratorAuthorizationRepository.js';
+import * as adminAuthRepo from '../repository/administratorAuthorizationRepository.js';
+import { pool } from '../db/index.js';
 import {
   initiateConfigurationSession,
   processClientSelection,
@@ -166,7 +167,7 @@ export async function waClientConfigHandler(context) {
 async function handleConfigurationInitiation(sock, remoteJid, phoneNumber, quotedMessage) {
   try {
     // Security: Verify administrator authorization
-    const isAuthorized = await isAuthorizedAdministrator(phoneNumber);
+    const isAuthorized = await adminAuthRepo.isPhoneAuthorized(pool, phoneNumber);
     if (!isAuthorized) {
       // Silent rejection for unauthorized users (security best practice)
       logger.warn('Unauthorized configuration access attempt:', {
@@ -232,7 +233,7 @@ async function handleConfigurationInitiation(sock, remoteJid, phoneNumber, quote
 async function handleClientSelection(sock, remoteJid, phoneNumber, selection, quotedMessage) {
   try {
     // Security: Verify administrator authorization
-    const isAuthorized = await isAuthorizedAdministrator(phoneNumber);
+    const isAuthorized = await adminAuthRepo.isPhoneAuthorized(pool, phoneNumber);
     if (!isAuthorized) {
       return false; // Silent rejection
     }
@@ -296,7 +297,7 @@ async function handleClientSelection(sock, remoteJid, phoneNumber, selection, qu
 async function handleYesNoResponse(sock, remoteJid, phoneNumber, response, quotedMessage) {
   try {
     // Security: Verify administrator authorization
-    const isAuthorized = await isAuthorizedAdministrator(phoneNumber);
+    const isAuthorized = await adminAuthRepo.isPhoneAuthorized(pool, phoneNumber);
     if (!isAuthorized) {
       return false;
     }
@@ -354,7 +355,7 @@ async function handleYesNoResponse(sock, remoteJid, phoneNumber, response, quote
 async function handleConfigurationInput(sock, remoteJid, phoneNumber, input, quotedMessage) {
   try {
     // Security: Verify administrator authorization
-    const isAuthorized = await isAuthorizedAdministrator(phoneNumber);
+    const isAuthorized = await adminAuthRepo.isPhoneAuthorized(pool, phoneNumber);
     if (!isAuthorized) {
       return false;
     }

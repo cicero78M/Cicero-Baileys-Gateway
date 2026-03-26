@@ -1,6 +1,6 @@
 // src/model/userModel.js
 
-import { query } from '../repository/db.js';
+import { query } from '../db/index.js';
 import { PRIORITY_USER_NAMES } from '../utils/constants.js';
 import { normalizeEmail, normalizeUserId } from '../utils/utilsHelper.js';
 import { minPhoneDigitLength, normalizeWhatsappNumber } from '../utils/waHelper.js';

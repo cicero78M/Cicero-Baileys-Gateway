@@ -85,3 +85,5 @@ export const withTransaction = async (callback, { sessionSettings } = {}) => {
 };
 
 export const close = () => adapter.close?.();
+
+export const pool = adapter.getPool?.() || adapter;
