@@ -368,6 +368,8 @@ export async function fetchSinglePostKhusus(linkOrCode, clientId) {
     shortcode: code,
     caption: info.caption?.text || info.caption || null,
     comment_count: info.comment_count || 0,
+    like_count: info.like_count || 0,
+    source_type: 'manual_input',
     thumbnail_url:
       info.thumbnail_url ||
       info.display_url ||

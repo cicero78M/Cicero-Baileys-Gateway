@@ -45,7 +45,9 @@ async function recordTasksToDB(igUrls, tiktokUrls, clientId, operatorPhone) {
       query(
         `INSERT INTO insta_post (client_id, shortcode, task_source, operator_phone, created_at)
          VALUES ($1, $2, 'broadcast_wa', $3, NOW())
-         ON CONFLICT (shortcode) DO NOTHING`,
+         ON CONFLICT (shortcode) DO UPDATE
+           SET task_source    = 'broadcast_wa',
+               operator_phone = COALESCE(EXCLUDED.operator_phone, insta_post.operator_phone)`,
         [clientId, shortcode, operatorPhone ?? null]
       )
     );
@@ -58,7 +60,9 @@ async function recordTasksToDB(igUrls, tiktokUrls, clientId, operatorPhone) {
       query(
         `INSERT INTO tiktok_post (client_id, video_id, task_source, operator_phone, created_at)
          VALUES ($1, $2, 'broadcast_wa', $3, NOW())
-         ON CONFLICT (video_id) DO NOTHING`,
+         ON CONFLICT (video_id) DO UPDATE
+           SET task_source    = 'broadcast_wa',
+               operator_phone = COALESCE(EXCLUDED.operator_phone, tiktok_post.operator_phone)`,
         [clientId, videoId, operatorPhone ?? null]
       )
     );
@@ -212,14 +216,14 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
 
     logger.info({ phoneNumber, clientId, igUrls, tiktokUrls }, 'waAutoSosmedTask: DM registered operator');
 
-    const formattedDate = formatDate(new Date());
-    const { igResults, tiktokResults } = await liveFetchAll(igUrls, tiktokUrls, clientId);
-
     try {
       await recordTasksToDB(igUrls, tiktokUrls, clientId, phoneNumber);
     } catch (err) {
       logger.error({ err, phoneNumber, clientId }, 'waAutoSosmedTask: DM DB insert failed');
     }
+
+    const formattedDate = formatDate(new Date());
+    const { igResults, tiktokResults } = await liveFetchAll(igUrls, tiktokUrls, clientId);
 
     // Response B
     const recapText = buildEngagementRecapText(igResults, tiktokResults, formattedDate);
