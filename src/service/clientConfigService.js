@@ -125,7 +125,7 @@ export async function resolveClientIdForGroup(groupJid) {
 
   // 2. Legacy fallback: clients table
   const clientsResult = await query(
-    `SELECT client_id FROM clients WHERE group_jid = $1 LIMIT 1`,
+    `SELECT client_id FROM clients WHERE client_group = $1 LIMIT 1`,
     [groupJid]
   );
   if (clientsResult.rows.length > 0) return clientsResult.rows[0].client_id;
