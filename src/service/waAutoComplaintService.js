@@ -17,12 +17,13 @@ function normalizeWhatsAppId(value) {
   if (!value) return '';
   const trimmed = String(value).trim();
   if (!trimmed) return '';
-  if (/@[cs]\.us$/.test(trimmed) || trimmed.endsWith('@g.us')) {
+  // Pass through any already-formed JID (e.g. @s.whatsapp.net, @g.us, @c.us)
+  if (trimmed.includes('@')) {
     return trimmed;
   }
   const numeric = trimmed.replace(/\D/g, '');
   if (!numeric) return '';
-  return `${numeric}@c.us`;
+  return `${numeric}@s.whatsapp.net`;
 }
 
 function parseRecipientList(csvValue = '') {
@@ -172,7 +173,7 @@ export async function handleComplaintMessageIfApplicable({
       nrp: reporter.nrp,
       expiresAt: Date.now() + 15 * 60 * 1000,
     });
-    logger.info({ senderJid, platform, newUsername }, 'USERNAME_MISMATCH: confirmation DM sent');
+    logger.info({ senderJid, platform, newUsername }, 'USERNAME_MISMATCH: confirmation DM enqueued');
   }
 
   return true;
