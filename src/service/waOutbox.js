@@ -38,6 +38,11 @@ export function attachWorker(adapter) {
       if (payload.mediaPath && adapter.sendMedia) {
         return adapter.sendMedia(jid, payload.mediaPath, payload.text);
       }
+      if (payload.text == null) {
+        // Non-retryable: bad job payload — discard without spamming retries
+        console.warn('[outbox] Skipping job with null/undefined text payload', { jid, jobId: job.id });
+        return;
+      }
       return adapter.sendText(jid, payload.text);
     });
   }, { connection });
