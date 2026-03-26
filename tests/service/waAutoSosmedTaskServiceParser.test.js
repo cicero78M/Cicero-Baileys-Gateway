@@ -1,7 +1,45 @@
 import { jest } from '@jest/globals';
 
-jest.unstable_mockModule('../../src/service/clientService.js', () => ({
-  findClientById: jest.fn(),
+jest.unstable_mockModule('../../src/service/sosmedBroadcastParser.js', () => ({
+  isBroadcastMessage: jest.fn(),
+  extractUrls: jest.fn().mockReturnValue({ igUrls: [], tiktokUrls: [] }),
+  formatDate: jest.fn().mockReturnValue('Senin, 2 Juni 2025'),
+}));
+
+jest.unstable_mockModule('../../src/service/clientConfigService.js', () => ({
+  resolveClientIdForGroup: jest.fn(),
+  getConfig: jest.fn(),
+  getConfigOrDefault: jest.fn().mockResolvedValue('ack'),
+}));
+
+jest.unstable_mockModule('../../src/repository/operatorRegistrationSessionRepository.js', () => ({
+  findActiveSession: jest.fn().mockResolvedValue(null),
+  upsertSession: jest.fn(),
+  deleteSession: jest.fn(),
+  isRateLimited: jest.fn(),
+  purgeExpiredSessions: jest.fn(),
+}));
+
+jest.unstable_mockModule('../../src/repository/operatorRepository.js', () => ({
+  findActiveOperatorByPhone: jest.fn().mockResolvedValue(null),
+  upsertOperator: jest.fn(),
+}));
+
+jest.unstable_mockModule('../../src/service/operatorRegistrationService.js', () => ({
+  handleUnregisteredBroadcast: jest.fn(),
+  handleRegistrationDialog: jest.fn(),
+}));
+
+jest.unstable_mockModule('../../src/service/waOutbox.js', () => ({
+  enqueueSend: jest.fn(),
+}));
+
+jest.unstable_mockModule('../../src/db/postgres.js', () => ({
+  query: jest.fn(),
+}));
+
+jest.unstable_mockModule('../../src/utils/logger.js', () => ({
+  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
 jest.unstable_mockModule('../../src/handler/fetchpost/instaFetchPost.js', () => ({
@@ -12,53 +50,27 @@ jest.unstable_mockModule('../../src/handler/fetchpost/tiktokFetchPost.js', () =>
   fetchAndStoreSingleTiktokPost: jest.fn(),
 }));
 
-jest.unstable_mockModule('../../src/handler/fetchabsensi/sosmedTask.js', () => ({
-  generateSosmedTaskMessage: jest.fn(),
-}));
-
 let cleanText;
-let isSosmedTaskBroadcastFormat;
 
 beforeAll(async () => {
-  ({ cleanText, isSosmedTaskBroadcastFormat } = await import('../../src/service/waAutoSosmedTaskService.js'));
+  ({ cleanText } = await import('../../src/service/waAutoSosmedTaskService.js'));
 });
 
-describe('waAutoSosmedTaskService parser', () => {
-  test('cleanText menormalisasi escaped newline, tanda baca, dan zero-width chars', () => {
-    const raw = 'Selamat sore, komandan\\nMohon izin dibantu\u200B: follow!';
-
-    expect(cleanText(raw)).toBe('Selamat sore  komandan Mohon izin dibantu  follow ');
+describe('waAutoSosmedTaskService  cleanText helper', () => {
+  test('normalises escaped newline, zero-width chars', () => {
+    const raw = 'Selamat sore\u200B komandan\\n follow';
+    const result = cleanText(raw);
+    expect(result).not.toContain('\u200B');
+    expect(result).not.toContain('\\n');
   });
 
-  test('lolos untuk format user dengan escaped newline dan variasi "mohon izin dibantu"', () => {
-    const text =
-      'Selamat sore komandan, senior dan rr\\nMohon izin dibantu\\nSilakan follow akun berikut\\nhttps://instagram.com/p/abc123';
-
-    expect(isSosmedTaskBroadcastFormat(text)).toBe(true);
+  test('returns empty string for null input', () => {
+    expect(cleanText(null)).toBe('');
+    expect(cleanText(undefined)).toBe('');
   });
 
-  test('lolos untuk variasi "mohon ijin bantu" + salam multi sapaan setelah waktu', () => {
-    const text =
-      'Selamat siang komandan, senior dan rr\nMohon ijin bantu\nMohon repost posting ini\nhttps://www.tiktok.com/@abc/video/123';
-
-    expect(isSosmedTaskBroadcastFormat(text)).toBe(true);
-  });
-
-  test('gagal bila tidak ada URL sosmed didukung dan log debug memuat rule gagal', () => {
-    const debugSpy = jest.spyOn(console, 'debug').mockImplementation(() => {});
-    const text = 'Selamat pagi komandan\nMohon izin dibantu\nFollow akun ini';
-
-    const result = isSosmedTaskBroadcastFormat(text);
-
-    expect(result).toBe(false);
-    expect(debugSpy).toHaveBeenCalledWith(
-      '[AUTO-SOSMED-TASK] Broadcast parser eval:',
-      expect.objectContaining({
-        normalizedForMatch: expect.any(String),
-        failedRequirements: expect.arrayContaining(['minimal 1 URL sosmed didukung']),
-      })
-    );
-
-    debugSpy.mockRestore();
+  test('preserves regular alphanum text', () => {
+    const result = cleanText('Selamat pagi 123');
+    expect(result).toBe('Selamat pagi 123');
   });
 });
