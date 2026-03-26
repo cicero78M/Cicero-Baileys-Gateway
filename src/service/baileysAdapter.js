@@ -423,8 +423,21 @@ export async function createBaileysClient(clientId = 'wa-admin') {
       try {
         // Handle different content types
         if (typeof content === 'string') {
-          // Text message
+          // Plain string → text message
           const result = await sock.sendMessage(jid, { text: content });
+          return normalizeOutgoingMessage(result);
+        } else if (content == null) {
+          // Guard: null/undefined content — log and skip rather than crash
+          writeStructuredLog('warn', buildStructuredLog({
+            clientId,
+            event: 'send_message_skipped_null_content',
+            jid,
+            error: 'sendMessage called with null/undefined content',
+          }));
+          return null;
+        } else if (typeof content.text === 'string') {
+          // Baileys-native { text: '...' } object
+          const result = await sock.sendMessage(jid, { text: content.text });
           return normalizeOutgoingMessage(result);
         } else if (content.mimetype) {
           // Media message (MessageMedia-like object)
@@ -446,6 +459,14 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
           const result = await sock.sendMessage(jid, mediaMessage);
           return normalizeOutgoingMessage(result);
+        } else {
+          writeStructuredLog('warn', buildStructuredLog({
+            clientId,
+            event: 'send_message_skipped_unknown_content',
+            jid,
+            error: `sendMessage called with unrecognised content type: ${typeof content}`,
+          }));
+          return null;
         }
       } catch (err) {
         writeStructuredLog('error', buildStructuredLog({
