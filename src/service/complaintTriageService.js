@@ -324,11 +324,6 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi, 
         'Aktivitas akun masih rendah, optimalkan profil/aktivitas dahulu.',
         'Kirim screenshot profil + bukti aksi terbaru untuk verifikasi ulang.',
       ];
-    } else if (now.getTime() - windowStart.getTime() <= SYNC_WINDOW_MS) {
-      result.status = 'NEED_MORE_DATA';
-      result.diagnosisCode = 'SYNC_PENDING';
-      result.confidence = 0.6;
-      result.nextActions = ['Menunggu sinkronisasi ±30 menit sebelum validasi ulang.'];
     } else {
       result.status = 'OK';
       result.diagnosisCode = 'OK_ACTIVE_VALID';
