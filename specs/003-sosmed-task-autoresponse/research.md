@@ -2,7 +2,7 @@
 
 **Feature**: `003-sosmed-task-autoresponse`  
 **Date**: 2026-03-25  
-**Status**: Complete — all NEEDS CLARIFICATION resolved (updated: clarify pass 3)
+**Status**: Complete — all NEEDS CLARIFICATION resolved (updated: clarify pass — 2026-03-26)
 
 ---
 
@@ -115,9 +115,10 @@ awaiting_satker_choice → (invalid) → awaiting_satker_choice (resend list)
 
 ### 9. Recap Engagement Response Format
 
-**Decision**: DM path sends 2 sequential messages (engagement recap → ack tugas direkam). Group path sends 1 message (hardcoded ack). Each is an `enqueueSend` call queued atomically to preserve order.
+**Decision**: DM path sends **3 sequential messages**: (1) engagement recap, (2) ack tugas direkam, (3) daftar tugas hari ini. Group path sends 1 message (hardcoded ack). Each is an `enqueueSend` call queued atomically to preserve order.
 
-**Rationale**: BullMQ preserves FIFO ordering within a queue. Two DM messages arrive in sequence without artificial delay beyond Bottleneck rate limiting. Group only ever sends one ack — no engagement data sent to group.
+**Rationale**: BullMQ preserves FIFO ordering within a queue. Three DM messages arrive in sequence without artificial delay beyond Bottleneck rate limiting. Group only ever sends one ack — no engagement data sent to group. The third message (daftar tugas hari ini) provides immediate self-service verification for the operator after inputting tasks.
+**Alternatives considered**: Two messages (rejected — spec FR-006b explicitly requires task list as third message following chakranarayana #8 alur).
 
 ---
 
@@ -154,6 +155,53 @@ awaiting_satker_choice → (invalid) → awaiting_satker_choice (resend list)
 
 **Rationale**: Sistem internal instansi. Log detail diperlukan untuk debugging operasional. Tidak ada persyaratan masking PII di log internal sistem ini.
 **Alternatives considered**: Mask to last 4 digits (rejected — complicates debugging; not required by applicable regulations for internal systems).
+
+---
+
+### 14. URL Cap per Broadcast (FR-005 step 1)
+
+**Decision**: Maksimal **10 URL** per broadcast (gabungan IG + TikTok). URL ke-11 dan seterusnya diabaikan diam-diam dan dicatat `logger.warn`. Broadcast tidak ditolak.
+
+**Rationale**: Operator khas mengirim 1–5 URL per broadcast. Batas 10 mencegah eksekusi tak terbatas (worst-case: 10 × 8s = 80s timeout) dan mencegah operator yang bermasalah/termasi memenuhi antrian fetch. SC-001 mendefinisikan ≤15s sebagai best-effort untuk ≤3 URL; batas 90 detik adalah hard cap.
+**Alternatives considered**: Tidak ada batas (ditolak — SC-001 tidak testable tanpa batas); batas 5 (ditolak — terlalu ketat untuk team broadcast multi-platform); batas 3 (ditolak — terlalu ketat).
+
+---
+
+### 15. Operator Rate Limiting — FR-021
+
+**Decision**: In-memory counter `Map<phoneNumber, { count: number, windowStart: number }>` dengan window 60 menit bergulir; maks `operator_broadcast_rate_limit` (default 20) broadcast per window. Counter tidak persist ke DB dan direset saat gateway restart.
+
+**Rationale**: In-memory cukup untuk use case ini — window 60 menit pendek dan restart jarang terjadi. DB-backed counter (mis. Redis incr) menambah dependensi tanpa manfaat nyata. Rate limit melindungi terhadap infinite loop atau akun operator yang dikompromikan.
+**Alternatives considered**: Redis-backed counter (ditolak — overhead tidak diperlukan); daily cap (ditolak — operator legitimasi tidak melebihi 20/jam).
+
+---
+
+### 16. Zero-URL Broadcast Edge Cases
+
+**Decision**:
+- **Jalur DM operator terdaftar**: Jika setelah ekstraksi tidak ada URL IG/TikTok valid, bot membalas **satu pesan error** dari config key `operator_no_valid_url`; tidak ada respons tiga bagian; seen-marking tetap berlaku.
+- **Jalur grup klien terdaftar**: Jika tidak ada URL valid, bot **diam** (tidak merespons ke grup); catat `logger.warn`; diperlakukan seolah bukan broadcast tugas.
+
+**Rationale**: Operator DM memberi umpan balik langsung yang dapat ditindaklanjuti. Group path tidak — mengirim "0 URL direkam" ke grup terlihat seperti bug/spam bagi anggota grup yang tidak tahu bot ada.
+**Alternatives considered**: Silent both (ditolak — operator DM perlu umpan balik); ack "0 URL" ke grup (ditolak — confusing).
+
+---
+
+### 17. Session Re-Hydration Setelah Restart
+
+**Decision**: Sesi registrasi di-hydrate otomatis dari DB **per pesan masuk** — handler melakukan `SELECT * FROM operator_registration_sessions WHERE phone_number = $1 AND expires_at > NOW()` sebelum setiap routing decision. Tidak ada startup logic khusus.
+
+**Rationale**: Karena sesi disimpan di PostgreSQL (bukan memory), restart gateway transparan. Pattern per-message query sudah digunakan di routing DM. Tidak menambah startup complexity.
+**Alternatives considered**: Load semua sesi aktif ke memory saat startup (ditolak — tidak perlu, dan race condition saat multiple instances).
+
+---
+
+### 18. DB Read Failure saat Membangun Rekap
+
+**Decision**: Jika `getLikesByShortcode` atau `getCommentsByVideoId` gagal (koneksi timeout, query error): tampilkan `✅ [url] — N count` menggunakan nilai count dari return object fetch; **lewati baris `Partisipan:`**; catat `logger.warn`. Rekap tetap dikirim.
+
+**Rationale**: Graceful degradation — count tersedia dari fetch return value bahkan jika DB read gagal. Menampilkan partial info lebih baik dari menampilkan ❌ (yang menyiratkan fetch gagal). Konsisten dengan prinsip tidak-blocking dalam FR-005.
+**Alternatives considered**: Perlakukan sebagai API fetch gagal (❌) (ditolak — fetch berhasil, hanya baca DB partisipan yang gagal; menggunakan ❌ misleading).
 
 ---
 
