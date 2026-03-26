@@ -169,7 +169,10 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi, 
         // T015: Fetch reported + DB profiles for ALL mismatched platforms in parallel
         const safeFetch = (platform, username) =>
           username
-            ? withTimeout(rapidApi({ platform, username }), getRapidApiTimeoutMs()).catch(() => null)
+            ? withTimeout(rapidApi({ platform, username }), getRapidApiTimeoutMs()).catch((e) => {
+                if (e?.code === 'RAPIDAPI_CONFIG_MISSING' || e?.code === 'RAPIDAPI_UNAVAILABLE') throw e;
+                return null;
+              })
             : Promise.resolve(null);
 
         const fetchTasks = [];
@@ -235,8 +238,11 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi, 
     } catch (err) {
       // Mark EXTERNAL_NA as additive flag — main diagnosis still proceeds with internal data
       result.diagnoses.push('EXTERNAL_NA');
-      rapidProviderError = { status: err.status || 503, message: err.message };
-      if (err?.code === 'RAPIDAPI_UNAVAILABLE') {
+      rapidProviderError = { status: err.status || 503, message: err.message, code: err.code };
+      if (err?.code === 'RAPIDAPI_CONFIG_MISSING') {
+        // Config error — log clearly so it appears in PM2 and continue with internal data only
+        console.warn('[complaintTriage] RapidAPI not configured:', err.message);
+      } else if (err?.code === 'RAPIDAPI_UNAVAILABLE') {
         result.diagnosisCode = 'SYNC_PENDING';
         result.confidence = 0.45;
         result.nextActions = [

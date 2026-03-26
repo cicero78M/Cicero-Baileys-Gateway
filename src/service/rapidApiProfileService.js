@@ -95,18 +95,29 @@ function buildRapidApiUrl(platform, username, host) {
 }
 
 export async function fetchSocialProfile({ platform, username }) {
-  const rapidApiKey = process.env.RAPIDAPI_KEY;
-  const rapidApiHost = process.env.RAPIDAPI_HOST;
-
-  if (!rapidApiKey || !rapidApiHost) {
-    const error = new Error('RapidAPI config is missing');
+  const normalizedPlatform = String(platform || '').toLowerCase();
+  if (!['instagram', 'tiktok'].includes(normalizedPlatform)) {
+    const error = new Error(`Unsupported platform: ${platform}`);
     error.code = 'RAPIDAPI_CONFIG_MISSING';
     throw error;
   }
 
-  const normalizedPlatform = String(platform || '').toLowerCase();
-  if (!['instagram', 'tiktok'].includes(normalizedPlatform)) {
-    const error = new Error(`Unsupported platform: ${platform}`);
+  // Resolve key+host per platform, with fallback to generic vars
+  let rapidApiKey, rapidApiHost;
+  if (normalizedPlatform === 'instagram') {
+    rapidApiKey = process.env.RAPIDAPI_INSTAGRAM_KEY || process.env.RAPIDAPI_KEY;
+    rapidApiHost = process.env.RAPIDAPI_INSTAGRAM_HOST || process.env.RAPIDAPI_HOST;
+  } else {
+    rapidApiKey = process.env.RAPIDAPI_TIKTOK_KEY || process.env.RAPIDAPI_KEY;
+    rapidApiHost = process.env.RAPIDAPI_TIKTOK_HOST || process.env.RAPIDAPI_FALLBACK_HOST || process.env.RAPIDAPI_HOST;
+  }
+
+  if (!rapidApiKey || !rapidApiHost) {
+    const error = new Error(
+      `RapidAPI config missing for platform '${normalizedPlatform}'. ` +
+      `Set RAPIDAPI_INSTAGRAM_KEY+RAPIDAPI_INSTAGRAM_HOST for Instagram, ` +
+      `or RAPIDAPI_TIKTOK_KEY+RAPIDAPI_TIKTOK_HOST for TikTok.`
+    );
     error.code = 'RAPIDAPI_CONFIG_MISSING';
     throw error;
   }
