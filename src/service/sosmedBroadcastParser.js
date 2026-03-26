@@ -16,16 +16,6 @@ const IG_PATTERN = /https?:\/\/(?:[a-z0-9-]+\.)*(?:instagram\.com|ig\.me)\/[^\s)
 const TIKTOK_PATTERN = /https?:\/\/(?:[a-z0-9-]+\.)*(?:tiktok\.com|vm\.tiktok\.com)\/[^\s)>]*/gi;
 
 /**
- * Normalise common Indonesian spelling variants so detection is tolerant of
- * informal orthography.  Currently handles izin ↔ ijin (both are widely used).
- * @param {string} str
- * @returns {string}
- */
-function normaliseIndonesian(str) {
-  return str.replace(/\bijin\b/gi, 'izin');
-}
-
-/**
  * Determine whether a raw WA message text is a broadcast tugas sosmed.
  *
  * Detection rules:
@@ -37,19 +27,25 @@ function normaliseIndonesian(str) {
  * @param {{ broadcast_trigger_keywords: string, broadcast_required_phrase: string, broadcast_action_keywords: string }} config
  * @returns {boolean}
  */
+function normaliseIndonesian(str) {
+  return str
+    .replace(/\bijin\b/gi, 'izin')
+    .replace(/\bIjin\b/g, 'Izin');
+}
+
 export function isBroadcastMessage(text, config) {
   if (!text || typeof text !== 'string') return false;
 
-  const hasSalam = hasAnyKeyword(text, config.broadcast_trigger_keywords);
+  const normText = normaliseIndonesian(text);
+
+  const hasSalam = hasAnyKeyword(normText, config.broadcast_trigger_keywords);
   if (!hasSalam) return false;
 
   const requiredPhrase = config.broadcast_required_phrase;
-  const normalisedText = normaliseIndonesian(text).toLowerCase();
-  const normalisedPhrase = normaliseIndonesian(requiredPhrase).toLowerCase();
-  const hasPhrase = normalisedText.includes(normalisedPhrase);
+  const hasPhrase = normText.toLowerCase().includes(requiredPhrase.toLowerCase());
   if (!hasPhrase) return false;
 
-  const hasAction = hasAnyKeyword(text, config.broadcast_action_keywords);
+  const hasAction = hasAnyKeyword(normText, config.broadcast_action_keywords);
   if (!hasAction) return false;
 
   return true;
