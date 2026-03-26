@@ -1,3 +1,5 @@
+const stripAt = (v) => String(v || '').replace(/^@/, '');
+
 export function buildMismatchConfirmationDM(triageResult, parsed) {
   const reporter = parsed?.reporter || {};
   const mismatch = triageResult?.evidence?.mismatch || {};
@@ -13,11 +15,12 @@ export function buildMismatchConfirmationDM(triageResult, parsed) {
   const dbProfile = mismatch.dbProfile;
 
   const profileSummary = [
-    `Akun dilaporkan: ${igReported !== '-' ? `IG @${igReported}` : `TikTok @${tiktokReported}`}`,
+    `Akun dilaporkan: ${igReported !== '-' ? `IG @${stripAt(igReported)}` : `TikTok @${stripAt(tiktokReported)}`}`,
+
     reportedProfile
       ? `  followers: ${reportedProfile.followers_count ?? '-'} | postingan: ${reportedProfile.media_count ?? reportedProfile.posts ?? '-'} | private: ${reportedProfile.isPrivate ? 'ya' : 'tidak'}`
       : '  (data profil tidak tersedia)',
-    `Akun terdaftar CICERO: ${igDb !== '-' ? `IG @${igDb}` : `TikTok @${tiktokDb}`}`,
+    `Akun terdaftar CICERO: ${igDb !== '-' ? `IG @${stripAt(igDb)}` : `TikTok @${stripAt(tiktokDb)}`}`,
     dbProfile
       ? `  followers: ${dbProfile.followers_count ?? '-'} | postingan: ${dbProfile.media_count ?? dbProfile.posts ?? '-'} | private: ${dbProfile.isPrivate ? 'ya' : 'tidak'}`
       : '  (data profil tidak tersedia)',
@@ -153,10 +156,10 @@ export function buildOperatorResponse(triageResult, parsed) {
       `Ditemukan *ketidakcocokan username* pada akun ${platformLabel}.`,
     ];
     if (mismatchIg) {
-      lines.push(`  IG laporan: @${parsed.reporter.igUsername} vs CICERO: @${usernameDb.instagram || '-'}`);
+      lines.push(`  IG laporan: @${stripAt(parsed.reporter.igUsername)} vs CICERO: @${stripAt(usernameDb.instagram || '-')}`);
     }
     if (mismatchTiktok) {
-      lines.push(`  TikTok laporan: @${parsed.reporter.tiktokUsername} vs CICERO: @${usernameDb.tiktok || '-'}`);
+      lines.push(`  TikTok laporan: @${stripAt(parsed.reporter.tiktokUsername)} vs CICERO: @${stripAt(usernameDb.tiktok || '-')}`);
     }
     if (mismatch.moreRelevant) {
       lines.push(`Akun lebih relevan: ${mismatch.moreRelevant === 'reported' ? 'yang dilaporkan' : 'yang terdaftar CICERO'}`);

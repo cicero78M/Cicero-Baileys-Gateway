@@ -238,10 +238,10 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi, 
 
   // Populate profileLinks so templates/UI can render direct links
   if (reporter.igUsername) {
-    result.evidence.profileLinks.instagram = `https://instagram.com/${reporter.igUsername}`;
+    result.evidence.profileLinks.instagram = `https://instagram.com/${String(reporter.igUsername).replace(/^@/, '')}`;
   }
   if (reporter.tiktokUsername) {
-    result.evidence.profileLinks.tiktok = `https://tiktok.com/@${reporter.tiktokUsername}`;
+    result.evidence.profileLinks.tiktok = `https://tiktok.com/@${String(reporter.tiktokUsername).replace(/^@/, '')}`;
   }
 
   if (hasMismatch) {
