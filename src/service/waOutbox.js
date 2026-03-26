@@ -1,12 +1,19 @@
 import { Queue, Worker } from 'bullmq';
 import Bottleneck from 'bottleneck';
+import IORedis from 'ioredis';
+import { env } from '../config/env.js';
 
 /**
  * Simple outbox queue for WhatsApp messages.
  * Jobs are rate limited globally to avoid hitting API limits.
  */
 const queueName = 'wa-outbox';
-export const outboxQueue = new Queue(queueName);
+
+// BullMQ requires an ioredis-compatible connection (node-redis is incompatible).
+// maxRetriesPerRequest must be null for BullMQ workers.
+const connection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
+
+export const outboxQueue = new Queue(queueName, { connection });
 
 const limiter = new Bottleneck({
   minTime: 350,
@@ -33,5 +40,5 @@ export function attachWorker(adapter) {
       }
       return adapter.sendText(jid, payload.text);
     });
-  });
+  }, { connection });
 }
