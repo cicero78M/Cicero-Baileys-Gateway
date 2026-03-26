@@ -16,6 +16,16 @@ const IG_PATTERN = /https?:\/\/(?:[a-z0-9-]+\.)*(?:instagram\.com|ig\.me)\/[^\s)
 const TIKTOK_PATTERN = /https?:\/\/(?:[a-z0-9-]+\.)*(?:tiktok\.com|vm\.tiktok\.com)\/[^\s)>]*/gi;
 
 /**
+ * Normalise common Indonesian spelling variants so detection is tolerant of
+ * informal orthography.  Currently handles izin ↔ ijin (both are widely used).
+ * @param {string} str
+ * @returns {string}
+ */
+function normaliseIndonesian(str) {
+  return str.replace(/\bijin\b/gi, 'izin');
+}
+
+/**
  * Determine whether a raw WA message text is a broadcast tugas sosmed.
  *
  * Detection rules:
@@ -34,7 +44,9 @@ export function isBroadcastMessage(text, config) {
   if (!hasSalam) return false;
 
   const requiredPhrase = config.broadcast_required_phrase;
-  const hasPhrase = text.toLowerCase().includes(requiredPhrase.toLowerCase());
+  const normalisedText = normaliseIndonesian(text).toLowerCase();
+  const normalisedPhrase = normaliseIndonesian(requiredPhrase).toLowerCase();
+  const hasPhrase = normalisedText.includes(normalisedPhrase);
   if (!hasPhrase) return false;
 
   const hasAction = hasAnyKeyword(text, config.broadcast_action_keywords);
