@@ -72,7 +72,8 @@ export async function handleUnregisteredBroadcast(phoneNumber, rawText, enqueueS
 
   await upsertSession(pool, phoneNumber, 'awaiting_confirmation', rawText, ttlSeconds, cooldownMinutes);
 
-  const promptText = await getConfig('DEFAULT', 'operator_unregistered_prompt');
+  const promptText = await getConfig('DEFAULT', 'operator_unregistered_prompt')
+    ?? 'Anda mengirim pesan tugas untuk dieksekusi, tapi database kami belum membaca Satker Asal anda. Apakah anda ingin mendaftarkan nomor anda sebagai operator tugas? (ya/tidak)';
   const promptJid = replyJid ?? `${phoneNumber}@s.whatsapp.net`;
   await enqueueSend(promptJid, { text: promptText });
 
@@ -126,10 +127,12 @@ async function handleConfirmationReply(phoneNumber, jid, replyText, session, enq
     await upsertSession(pool, phoneNumber, 'awaiting_satker_choice', session.original_message, ttlSeconds, cooldownMinutes);
 
     const satkers = await fetchActiveSatkerList();
-    const header = await getConfig('DEFAULT', 'operator_satker_list_header');
+    const header = await getConfig('DEFAULT', 'operator_satker_list_header')
+      ?? 'Pilih Satker Anda dengan membalas nomor urut:';
 
     if (satkers.length === 0) {
-      const noSatkerText = await getConfig('DEFAULT', 'operator_no_satker');
+      const noSatkerText = await getConfig('DEFAULT', 'operator_no_satker')
+        ?? 'Tidak ada Satker aktif. Hubungi administrator.';
       await enqueueSend(jid, { text: noSatkerText });
       await deleteSession(pool, phoneNumber);
       return;
@@ -142,7 +145,8 @@ async function handleConfirmationReply(phoneNumber, jid, replyText, session, enq
 
   if (TIDAK_TOKENS.has(token)) {
     await deleteSession(pool, phoneNumber);
-    const declinedText = await getConfig('DEFAULT', 'operator_registration_declined');
+    const declinedText = await getConfig('DEFAULT', 'operator_registration_declined')
+      ?? 'Baik, pendaftaran dibatalkan.';
     await enqueueSend(jid, { text: declinedText });
     logger.info({ phoneNumber }, 'operatorRegistration: registration declined, sent G');
     return;
@@ -159,7 +163,8 @@ async function handleSatkerChoiceReply(phoneNumber, jid, replyText, session, enq
   const satkers = await fetchActiveSatkerList();
 
   if (satkers.length === 0) {
-    const noSatkerText = await getConfig('DEFAULT', 'operator_no_satker');
+    const noSatkerText = await getConfig('DEFAULT', 'operator_no_satker')
+      ?? 'Tidak ada Satker aktif. Hubungi administrator.';
     await enqueueSend(jid, { text: noSatkerText });
     await deleteSession(pool, phoneNumber);
     return;
@@ -169,8 +174,10 @@ async function handleSatkerChoiceReply(phoneNumber, jid, replyText, session, enq
   const selectedSatker = satkers[choiceIndex - 1]; // 1-based
 
   if (!Number.isInteger(choiceIndex) || !selectedSatker) {
-    const invalidText = await getConfig('DEFAULT', 'operator_invalid_choice');
-    const header = await getConfig('DEFAULT', 'operator_satker_list_header');
+    const invalidText = await getConfig('DEFAULT', 'operator_invalid_choice')
+      ?? 'Pilihan tidak valid. Silakan balas dengan nomor urut.';
+    const header = await getConfig('DEFAULT', 'operator_satker_list_header')
+      ?? 'Pilih Satker Anda dengan membalas nomor urut:';
 
     await enqueueSend(jid, { text: invalidText });                                        // Response H
     await enqueueSend(jid, { text: buildSatkerListText(header, satkers) });               // Response E
@@ -183,7 +190,8 @@ async function handleSatkerChoiceReply(phoneNumber, jid, replyText, session, enq
   await upsertOperator(pool, phoneNumber, selectedSatker.client_id, selectedSatker.nama);
   await deleteSession(pool, phoneNumber);
 
-  const ackTemplate = await getConfig('DEFAULT', 'operator_registration_ack');
+  const ackTemplate = await getConfig('DEFAULT', 'operator_registration_ack')
+    ?? 'Nomor Anda berhasil terdaftar sebagai operator untuk {satker_name}. Anda dapat mengirim pesan tugas kembali.';
   const ackText = ackTemplate.replace('{satker_name}', selectedSatker.nama);
   await enqueueSend(jid, { text: ackText });                                              // Response F
 
