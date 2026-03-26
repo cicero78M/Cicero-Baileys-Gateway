@@ -166,36 +166,57 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi, 
   if (shouldCallRapid && typeof rapidApi === 'function') {
     try {
       if (hasMismatch) {
-        // T015: dual-fetch reported + DB profiles in parallel (H1: no 3rd call)
-        const mPlatform = mismatchIg ? 'instagram' : 'tiktok';
-        const mReported = mismatchIg ? reporter.igUsername : reporter.tiktokUsername;
-        const mDb = mismatchIg ? usernameDb.instagram : usernameDb.tiktok;
-
+        // T015: Fetch reported + DB profiles for ALL mismatched platforms in parallel
         const safeFetch = (platform, username) =>
           username
             ? withTimeout(rapidApi({ platform, username }), getRapidApiTimeoutMs()).catch(() => null)
             : Promise.resolve(null);
 
-        const [reportedProfile, dbProfile] = await Promise.all([
-          safeFetch(mPlatform, mReported),
-          safeFetch(mPlatform, mDb),
-        ]);
+        const fetchTasks = [];
+        if (mismatchIg) {
+          fetchTasks.push(
+            Promise.all([
+              safeFetch('instagram', reporter.igUsername),
+              safeFetch('instagram', usernameDb.instagram),
+            ]).then(([rp, dp]) => ({ platform: 'instagram', rp, dp }))
+          );
+        }
+        if (mismatchTiktok) {
+          fetchTasks.push(
+            Promise.all([
+              safeFetch('tiktok', reporter.tiktokUsername),
+              safeFetch('tiktok', usernameDb.tiktok),
+            ]).then(([rp, dp]) => ({ platform: 'tiktok', rp, dp }))
+          );
+        }
 
-        // Store in rapidEvidence for profile-condition checks (H1: reuse, no re-fetch)
-        if (mPlatform === 'instagram') rapidEvidence.instagram = reportedProfile;
-        else rapidEvidence.tiktok = reportedProfile;
+        const pairResults = await Promise.all(fetchTasks);
 
-        // Compute relevance score: followers + media_count, penalty for private
-        const relScore = (p) =>
-          p ? ((p.followers_count || 0) + (p.media_count || 0)) * (p.isPrivate ? 0.5 : 1) : 0;
-        const moreRelevant = relScore(reportedProfile) >= relScore(dbProfile) ? 'reported' : 'db';
-        result.evidence.mismatch = { reportedProfile, dbProfile, moreRelevant };
+        // Relevance: account existence + aggregated activity score (correct field names from mapProviderToSocialProfile)
+        const relScore = (p) => {
+          if (!p || p.exists === false) return -1;
+          if (p.recentActivityScore !== null && p.recentActivityScore !== undefined) {
+            return p.isPrivate ? p.recentActivityScore * 0.5 : p.recentActivityScore;
+          }
+          return ((p.followers ?? 0) + (p.posts ?? 0) * 2 + (p.likes ?? 0)) * (p.isPrivate ? 0.5 : 1);
+        };
 
-        // Fetch non-mismatch platform if applicable
-        if (mismatchIg && reporter.tiktokUsername) {
-          rapidEvidence.tiktok = await withTimeout(rapidApi({ platform: 'tiktok', username: reporter.tiktokUsername }), getRapidApiTimeoutMs()).catch(() => null);
-        } else if (!mismatchIg && reporter.igUsername) {
-          rapidEvidence.instagram = await withTimeout(rapidApi({ platform: 'instagram', username: reporter.igUsername }), getRapidApiTimeoutMs()).catch(() => null);
+        const mismatchData = {};
+        for (const { platform, rp, dp } of pairResults) {
+          rapidEvidence[platform] = rp;
+          const rScore = relScore(rp);
+          const dScore = relScore(dp);
+          const moreRelevant = rScore < 0 && dScore < 0 ? 'unknown' : rScore >= dScore ? 'reported' : 'db';
+          mismatchData[platform] = { reportedProfile: rp, dbProfile: dp, moreRelevant };
+        }
+        result.evidence.mismatch = mismatchData;
+
+        // Fetch non-mismatched platforms for overall account-status context
+        if (!mismatchIg && reporter.igUsername) {
+          rapidEvidence.instagram = await safeFetch('instagram', reporter.igUsername);
+        }
+        if (!mismatchTiktok && reporter.tiktokUsername) {
+          rapidEvidence.tiktok = await safeFetch('tiktok', reporter.tiktokUsername);
         }
       } else {
         if (reporter.igUsername) {
@@ -249,12 +270,11 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi, 
     result.diagnosisCode = 'USERNAME_MISMATCH';
     result.diagnoses.push('USERNAME_MISMATCH');
 
-    // H1: reuse reportedProfile from dual-fetch (no 3rd RapidAPI call)
-    const mPlatform = mismatchIg ? 'instagram' : 'tiktok';
-    const reportedProfileForAssess = result.evidence.mismatch?.reportedProfile
-      ?? (mPlatform === 'instagram' ? rapidEvidence.instagram : rapidEvidence.tiktok);
-    for (const code of assessProfileConditions(reportedProfileForAssess)) {
-      result.diagnoses.push(code);
+    // H1: reuse reportedProfile from per-platform mismatch data (no extra API calls)
+    for (const [plat, mData] of Object.entries(result.evidence.mismatch || {})) {
+      for (const code of assessProfileConditions(mData.reportedProfile ?? rapidEvidence[plat])) {
+        if (!result.diagnoses.includes(code)) result.diagnoses.push(code);
+      }
     }
 
     result.confidence = 0.92;
