@@ -14,48 +14,58 @@ export function buildMismatchConfirmationDM(triageResult, parsed) {
   const mismatchIg = Boolean(igReported && normalize(igReported) !== normalize(igDb));
   const mismatchTiktok = Boolean(tiktokReported && normalize(tiktokReported) !== normalize(tiktokDb));
 
-  // mismatch.reportedProfile/dbProfile belongs to the primary mismatched platform (IG wins)
-  const primaryPlatform = mismatchIg ? 'instagram' : 'tiktok';
-  const formatProfile = (p) =>
-    p
-      ? `  followers: ${p.followers_count ?? '-'} | postingan: ${p.media_count ?? p.posts ?? '-'} | private: ${p.isPrivate ? 'ya' : 'tidak'}`
-      : '  (data profil tidak tersedia)';
+  const formatProfile = (p) => {
+    if (!p) return '  (data profil tidak tersedia)';
+    if (p.exists === false) return '  ❌ Akun tidak ditemukan di platform';
+    const parts = [];
+    if (p.followers !== null && p.followers !== undefined) parts.push(`followers: ${p.followers}`);
+    if (p.posts !== null && p.posts !== undefined) parts.push(`postingan: ${p.posts}`);
+    if (p.likes !== null && p.likes !== undefined) parts.push(`likes: ${p.likes}`);
+    parts.push(`private: ${p.isPrivate ? 'ya' : 'tidak'}`);
+    return `  ${parts.join(' | ')}`;
+  };
+
+  const saranLine = (platformLabel, moreRelevant) => {
+    if (moreRelevant === 'reported') return `  ✅ ${platformLabel}: akun *yang dikirim user* lebih relevan → disarankan update CICERO`;
+    if (moreRelevant === 'db') return `  ⚠️ ${platformLabel}: akun *terdaftar CICERO* lebih relevan → periksa kembali username yang dikirim`;
+    return `  ℹ️ ${platformLabel}: tidak dapat menentukan relevansi (data profil tidak tersedia)`;
+  };
 
   const blocks = [];
+  const saranLines = [];
+  const confirmOptions = [];
+
   if (mismatchIg) {
-    const rp = primaryPlatform === 'instagram' ? mismatch.reportedProfile : null;
-    const dp = primaryPlatform === 'instagram' ? mismatch.dbProfile : null;
-    blocks.push(`Akun dikirim user: IG @${stripAt(igReported)}`);
-    blocks.push(formatProfile(rp));
-    blocks.push(`Akun terdaftar CICERO: IG @${stripAt(igDb || '-')}`);
-    blocks.push(formatProfile(dp));
+    const m = mismatch.instagram || {};
+    blocks.push('*Instagram:*');
+    blocks.push(`  Dikirim user: @${stripAt(igReported)}`);
+    blocks.push(formatProfile(m.reportedProfile));
+    blocks.push(`  Terdaftar CICERO: @${stripAt(igDb || '-')}`);
+    blocks.push(formatProfile(m.dbProfile));
+    saranLines.push(saranLine('Instagram', m.moreRelevant));
+    confirmOptions.push('  *ya konfirmasi ig* — untuk update akun Instagram');
   }
   if (mismatchTiktok) {
     if (blocks.length > 0) blocks.push('');
-    const rp = primaryPlatform === 'tiktok' ? mismatch.reportedProfile : null;
-    const dp = primaryPlatform === 'tiktok' ? mismatch.dbProfile : null;
-    blocks.push(`Akun dikirim user: TikTok @${stripAt(tiktokReported)}`);
-    blocks.push(formatProfile(rp));
-    blocks.push(`Akun terdaftar CICERO: TikTok @${stripAt(tiktokDb || '-')}`);
-    blocks.push(formatProfile(dp));
+    const m = mismatch.tiktok || {};
+    blocks.push('*TikTok:*');
+    blocks.push(`  Dikirim user: @${stripAt(tiktokReported)}`);
+    blocks.push(formatProfile(m.reportedProfile));
+    blocks.push(`  Terdaftar CICERO: @${stripAt(tiktokDb || '-')}`);
+    blocks.push(formatProfile(m.dbProfile));
+    saranLines.push(saranLine('TikTok', m.moreRelevant));
+    confirmOptions.push('  *ya konfirmasi tiktok* — untuk update akun TikTok');
   }
-
-  const profileTag = mismatch.moreRelevant === 'reported' ? 'yang dikirim user' : 'terdaftar di CICERO';
-  const saranPlatforms = [mismatchIg && 'Instagram', mismatchTiktok && 'TikTok'].filter(Boolean).join(' & ');
-
-  const confirmOptions = [
-    mismatchIg ? '  *ya konfirmasi ig* — untuk update akun Instagram' : null,
-    mismatchTiktok ? '  *ya konfirmasi tiktok* — untuk update akun TikTok' : null,
-  ].filter(Boolean);
 
   return [
     '⚠️ *Konfirmasi Perubahan Username*',
     '',
-    `Username yang Anda kirimkan *berbeda* dengan yang terdaftar di CICERO.`,
+    'Username yang Anda kirimkan *berbeda* dengan yang terdaftar di CICERO.',
     '',
     ...blocks,
     '',
-    `Saran: akun ${saranPlatforms} yang lebih relevan → *${profileTag}*`,
+    '*Saran:*',
+    ...saranLines,
     '',
     'Jika Anda ingin memperbarui data CICERO dengan username yang Anda kirimkan, balas pesan ini dengan:',
     ...confirmOptions,
@@ -184,8 +194,17 @@ export function buildOperatorResponse(triageResult, parsed) {
     if (mismatchTiktok) {
       lines.push(`  TikTok laporan: @${stripAt(parsed.reporter.tiktokUsername)} vs CICERO: @${stripAt(usernameDb.tiktok || '-')}`);
     }
-    if (mismatch.moreRelevant) {
-      lines.push(`Akun lebih relevan: ${mismatch.moreRelevant === 'reported' ? 'yang dikirim user' : 'yang terdaftar CICERO'}`);
+    const relevanceLines = [
+      mismatchIg && mismatch.instagram?.moreRelevant
+        ? `  IG: ${mismatch.instagram.moreRelevant === 'reported' ? 'username dikirim user lebih relevan' : mismatch.instagram.moreRelevant === 'db' ? 'akun CICERO lebih relevan' : 'tidak dapat ditentukan'}`
+        : null,
+      mismatchTiktok && mismatch.tiktok?.moreRelevant
+        ? `  TikTok: ${mismatch.tiktok.moreRelevant === 'reported' ? 'username dikirim user lebih relevan' : mismatch.tiktok.moreRelevant === 'db' ? 'akun CICERO lebih relevan' : 'tidak dapat ditentukan'}`
+        : null,
+    ].filter(Boolean);
+    if (relevanceLines.length) {
+      lines.push('Relevansi akun:');
+      relevanceLines.forEach((l) => lines.push(l));
     }
     lines.push('Langkah cepat:');
     lines.push('1) Samakan username di CICERO dengan akun yang digunakan saat aksi.');
