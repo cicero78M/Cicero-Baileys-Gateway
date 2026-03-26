@@ -6,7 +6,6 @@ import { getLikesByShortcode } from '../model/instaLikeModel.js';
 import * as tiktokPostService from '../model/tiktokPostModel.js';
 import * as tiktokCommentService from '../model/tiktokCommentModel.js';
 
-
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
 const RAPIDAPI_HOST = 'tiktok-api23.p.rapidapi.com';
 
