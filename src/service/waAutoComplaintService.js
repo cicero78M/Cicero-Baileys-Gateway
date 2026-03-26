@@ -158,22 +158,36 @@ export async function handleComplaintMessageIfApplicable({
     const mismatchIg =
       reporter.igUsername &&
       normalize(reporter.igUsername) !== normalize(usernameDb.instagram);
-    const platform = mismatchIg ? 'instagram' : 'tiktok';
-    const oldUsername = mismatchIg ? usernameDb.instagram : usernameDb.tiktok;
-    const newUsername = String(
-      mismatchIg ? reporter.igUsername : reporter.tiktokUsername || ''
-    ).replace(/^@/, '');
+    const mismatchTiktok =
+      reporter.tiktokUsername &&
+      normalize(reporter.tiktokUsername) !== normalize(usernameDb.tiktok);
     const dmBody = buildMismatchConfirmationDM(triage, parsed);
     await enqueueSend(senderJid, { text: dmBody });
-    setConfirmation(senderJid, platform, {
-      senderJid,
-      platform,
-      oldUsername: oldUsername || '',
-      newUsername,
-      nrp: reporter.nrp,
-      expiresAt: Date.now() + 15 * 60 * 1000,
-    });
-    logger.info({ senderJid, platform, newUsername }, 'USERNAME_MISMATCH: confirmation DM enqueued');
+    const expiresAt = Date.now() + 15 * 60 * 1000;
+    if (mismatchIg) {
+      const newUsername = String(reporter.igUsername || '').replace(/^@/, '');
+      setConfirmation(senderJid, 'instagram', {
+        senderJid,
+        platform: 'instagram',
+        oldUsername: usernameDb.instagram || '',
+        newUsername,
+        nrp: reporter.nrp,
+        expiresAt,
+      });
+      logger.info({ senderJid, platform: 'instagram', newUsername }, 'USERNAME_MISMATCH: confirmation DM enqueued');
+    }
+    if (mismatchTiktok) {
+      const newUsername = String(reporter.tiktokUsername || '').replace(/^@/, '');
+      setConfirmation(senderJid, 'tiktok', {
+        senderJid,
+        platform: 'tiktok',
+        oldUsername: usernameDb.tiktok || '',
+        newUsername,
+        nrp: reporter.nrp,
+        expiresAt,
+      });
+      logger.info({ senderJid, platform: 'tiktok', newUsername }, 'USERNAME_MISMATCH: confirmation DM enqueued');
+    }
   }
 
   return true;
