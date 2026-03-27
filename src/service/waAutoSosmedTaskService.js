@@ -125,9 +125,17 @@ async function liveFetchAll(igUrls, tiktokUrls, clientId) {
       igResults.push({ url, ok: false, data: null });
     }
   }
-  if (igUrls.length) {
+  const fetchedShortcodes = igResults
+    .filter(({ ok, data }) => ok && data?.shortcode)
+    .map(({ data }) => String(data.shortcode).trim())
+    .filter(Boolean);
+  if (fetchedShortcodes.length) {
     try {
-      await handleFetchLikesInstagram(null, null, clientId);
+      await handleFetchLikesInstagram(null, null, clientId, {
+        shortcodes: fetchedShortcodes,
+        sourceType: 'manual_input',
+        enrichComments: false,
+      });
     } catch (err) {
       logger.warn({ err, clientId }, 'liveFetchAll: IG engagement sync failed');
     }
