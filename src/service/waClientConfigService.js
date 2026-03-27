@@ -13,8 +13,6 @@ import {
   hasClientCustomConfiguration
 } from '../service/clientConfigService.js';
 import { ConfigSessionService } from '../service/configSessionService.js';
-import * as adminAuthRepo from '../repository/administratorAuthorizationRepository.js';
-import { pool } from '../db/index.js';
 import { v4 as uuidv4 } from 'uuid';
 
 // Session constants
@@ -29,11 +27,15 @@ const WARNING_THRESHOLD_MINUTES = 2;
  */
 export async function initiateConfigurationSession(phoneNumber) {
   try {
-    // Clean up any expired sessions first
-    await ConfigSessionService.cleanupExpiredSessions();
+    // Clean up any expired sessions first (non-fatal if tables don't exist yet)
+    try {
+      await ConfigSessionService.cleanupExpiredSessions();
+    } catch (cleanupErr) {
+      logger.warn('Session cleanup skipped (tables may not exist yet):', { error: cleanupErr.message });
+    }
     
-    // Check if administrator already has an active session
-    const existingSession = await ConfigSessionService.hasActiveSession(phoneNumber);
+    // Check if user already has an active session
+    const existingSession = await ConfigSessionService.getActiveSession(phoneNumber);
     if (existingSession) {
       const timeRemaining = Math.ceil((new Date(existingSession.expires_at) - new Date()) / 60000);
       
@@ -45,57 +47,37 @@ export async function initiateConfigurationSession(phoneNumber) {
       }; 
     }
     
-    // Get administrator permissions
-    const adminPermissions = await getAdministratorPermissions(phoneNumber);
-    if (!adminPermissions || !adminPermissions.is_authorized) {
-      logger.warn('Unauthorized configuration access:', { phoneNumber });
-      return {
-        success: false,
-        error: 'UNAUTHORIZED',
-        message: 'Unauthorized access detected.'
-      };
-    }
-    
-    // Get accessible clients based on administrator scope
-    const accessibleClients = await getAccessibleClients(phoneNumber, adminPermissions);
+    // Get all active clients
+    const accessibleClients = await getActiveClients();
     
     if (accessibleClients.length === 0) {
       return {
         success: false,
         error: 'NO_ACTIVE_CLIENTS',
-        message: await formatNoActiveClientsMessage(adminPermissions.permission_level)
+        message: 'No active clients available for configuration at this time.'
       };
     }
     
-    // Create new configuration session
+    // Create new configuration session (client_id set to placeholder until user selects one)
     const sessionId = uuidv4();
-    const expiresAt = new Date(Date.now() + SESSION_TIMEOUT_MINUTES * 60000);
-    
-    const session = await ConfigSessionService.createSession({
-      session_id: sessionId,
-      phone_number: phoneNumber,
-      client_id: null, // Will be set when client is selected
-      current_stage: 'selecting_client',
-      configuration_group: null,
-      pending_changes: {},
-      original_state: {},
-      timeout_extensions: 0,
-      expires_at: expiresAt
-    });
+    const session = await ConfigSessionService.createSession(
+      phoneNumber,
+      '__pending__',
+      { timeoutMs: SESSION_TIMEOUT_MINUTES * 60000 }
+    );
     
     // Format client list message
     const clientListMessage = await formatClientListDisplay(accessibleClients);
     
     logger.info('Configuration session created:', {
       phoneNumber,
-      sessionId,
-      clientCount: accessibleClients.length,
-      permissionLevel: adminPermissions.permission_level
+      sessionId: session.session_id,
+      clientCount: accessibleClients.length
     });
     
     return {
       success: true,
-      sessionId,
+      sessionId: session.session_id,
       message: clientListMessage,
       availableClients: accessibleClients.length
     };
