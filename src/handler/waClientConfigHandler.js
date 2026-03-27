@@ -35,14 +35,27 @@ const YES_NO_PATTERN = /^(yes|no|y|n)$/i;
  * @returns {string|null} Extracted text content
  */
 function extractMessageText(message) {
+  // wwebjs/Baileys adapter format (msg.body used in waService.js)
+  if (message.body) {
+    return message.body.trim();
+  }
+
+  // Raw Baileys nested message format
+  if (message.message?.extendedTextMessage?.text) {
+    return message.message.extendedTextMessage.text.trim();
+  }
+  if (message.message?.conversation) {
+    return message.message.conversation.trim();
+  }
+
+  // Legacy fallback
   if (message.extendedTextMessage?.text) {
     return message.extendedTextMessage.text.trim();
   }
-  
   if (message.conversation) {
     return message.conversation.trim();
   }
-  
+
   return null;
 }
 
@@ -52,16 +65,22 @@ function extractMessageText(message) {
  * @returns {string} Phone number in international format
  */
 function extractPhoneNumber(remoteJid) {
-  return remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
+  // Strip any @suffix (@s.whatsapp.net, @c.us, @lid, etc.)
+  return remoteJid.replace(/@[^@]+$/, '');
 }
 
 /**
- * Check if JID represents a direct message (not group or newsletter)
+ * Check if JID represents a direct message (not group or newsletter).
+ * Uses denylist to accept @s.whatsapp.net, @c.us, and @lid (Baileys linked-device).
  * @param {string} remoteJid - WhatsApp JID
  * @returns {boolean} True if direct message
  */
 function isDirectMessage(remoteJid) {
-  return remoteJid.includes('@s.whatsapp.net') || remoteJid.includes('@c.us');
+  return (
+    !remoteJid.endsWith('@g.us') &&
+    !remoteJid.endsWith('@newsletter') &&
+    !remoteJid.endsWith('@broadcast')
+  );
 }
 
 /**
