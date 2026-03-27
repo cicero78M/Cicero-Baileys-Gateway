@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS client_config_sessions (
     id SERIAL PRIMARY KEY,
     session_id UUID NOT NULL UNIQUE,
     phone_number VARCHAR(20) NOT NULL,
-    client_id VARCHAR(50) NOT NULL,
+    client_id VARCHAR(50),
     current_stage VARCHAR(30) NOT NULL CHECK (current_stage IN ('selecting_client', 'viewing_config', 'selecting_group', 'modifying_config', 'confirming_changes')),
     configuration_group VARCHAR(50),
     pending_changes JSONB NOT NULL DEFAULT '{}',
