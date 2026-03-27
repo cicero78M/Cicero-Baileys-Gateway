@@ -13,13 +13,16 @@ import { PhoneNumberUtils, AuthorizationValidation, PERMISSION_LEVELS } from '..
  */
 export async function getAuthorizationByPhone(pool, phoneNumber) {
   const normalizedPhone = PhoneNumberUtils.normalize(phoneNumber);
-  if (!normalizedPhone) {
-    return null; // Invalid phone number format
+  // Fall back to raw value for non-standard JID identifiers (e.g., WhatsApp @lid device IDs)
+  // which cannot be normalized to standard international phone format
+  const lookupPhone = normalizedPhone || phoneNumber;
+  if (!lookupPhone) {
+    return null;
   }
 
   const result = await pool.query(
     'SELECT * FROM administrator_authorization WHERE phone_number = $1',
-    [normalizedPhone]
+    [lookupPhone]
   );
 
   if (result.rows.length === 0) {
