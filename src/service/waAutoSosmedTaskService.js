@@ -170,6 +170,48 @@ async function recordTasksToDB(igUrls, tiktokUrls, clientId, operatorPhone) {
   await Promise.allSettled(opArr);
 }
 
+async function recordSuccessfulTasksToDB({ igResults, tiktokResults, clientId, operatorPhone }) {
+  const opArr = [];
+
+  for (const item of igResults) {
+    if (!item?.ok || !item?.data?.shortcode) continue;
+    const shortcode = String(item.data.shortcode).trim();
+    if (!shortcode) continue;
+    opArr.push(
+      query(
+        `INSERT INTO insta_post (client_id, shortcode, source_type, task_source, operator_phone, created_at)
+         VALUES ($1, $2, 'manual_input', 'broadcast_wa', $3, NOW())
+         ON CONFLICT (shortcode) DO UPDATE
+           SET client_id      = EXCLUDED.client_id,
+               source_type    = 'manual_input',
+               task_source    = 'broadcast_wa',
+               operator_phone = COALESCE(EXCLUDED.operator_phone, insta_post.operator_phone)`,
+        [clientId, shortcode, operatorPhone ?? null]
+      )
+    );
+  }
+
+  for (const item of tiktokResults) {
+    if (!item?.ok || !item?.data?.videoId) continue;
+    const videoId = String(item.data.videoId).trim();
+    if (!videoId) continue;
+    opArr.push(
+      query(
+        `INSERT INTO tiktok_post (client_id, video_id, source_type, task_source, operator_phone, created_at)
+         VALUES ($1, $2, 'manual_input', 'broadcast_wa', $3, NOW())
+         ON CONFLICT (video_id) DO UPDATE
+           SET client_id      = EXCLUDED.client_id,
+               source_type    = 'manual_input',
+               task_source    = 'broadcast_wa',
+               operator_phone = COALESCE(EXCLUDED.operator_phone, tiktok_post.operator_phone)`,
+        [clientId, videoId, operatorPhone ?? null]
+      )
+    );
+  }
+
+  await Promise.allSettled(opArr);
+}
+
 async function liveFetchAll(igUrls, tiktokUrls, clientId, onProgress = null) {
   const { handleFetchLikesInstagram } = await import('../handler/fetchengagement/fetchLikesInstagram.js');
   const { handleFetchKomentarTiktokBatch } = await import('../handler/fetchengagement/fetchCommentTiktok.js');
@@ -558,12 +600,6 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
       return true;
     }
 
-    try {
-      await recordTasksToDB(igUrls, tiktokUrls, clientId, phoneNumber);
-    } catch (err) {
-      logger.error({ err, phoneNumber, clientId }, 'waAutoSosmedTask: manual mode DB insert failed');
-    }
-
     const formattedDate = formatDate(new Date());
     await enqueueSend(dmJid, {
       text: `Proses input manual multi-link dimulai.\nTarget Instagram: ${igUrls.length}\nTarget TikTok: ${tiktokUrls.length}`,
@@ -576,6 +612,11 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
         text: `Progress ${platformLabel} ${index}/${total}: ${statusLabel}\n${url}`,
       });
     });
+    try {
+      await recordSuccessfulTasksToDB({ igResults, tiktokResults, clientId, operatorPhone: phoneNumber });
+    } catch (err) {
+      logger.error({ err, phoneNumber, clientId }, 'waAutoSosmedTask: manual mode DB upsert success tasks failed');
+    }
 
     const igFailedItems = igResults.filter((item) => !item.ok);
     const tiktokFailedItems = tiktokResults.filter((item) => !item.ok);
@@ -655,14 +696,13 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
 
     logger.info({ phoneNumber, clientId, igUrls, tiktokUrls }, 'waAutoSosmedTask: DM registered operator');
 
-    try {
-      await recordTasksToDB(igUrls, tiktokUrls, clientId, phoneNumber);
-    } catch (err) {
-      logger.error({ err, phoneNumber, clientId }, 'waAutoSosmedTask: DM DB insert failed');
-    }
-
     const formattedDate = formatDate(new Date());
     const { igResults, tiktokResults } = await liveFetchAll(igUrls, tiktokUrls, clientId);
+    try {
+      await recordSuccessfulTasksToDB({ igResults, tiktokResults, clientId, operatorPhone: phoneNumber });
+    } catch (err) {
+      logger.error({ err, phoneNumber, clientId }, 'waAutoSosmedTask: DM DB upsert success tasks failed');
+    }
 
     // Response 1: engagement recap (with participants)
     const recapText = await buildEngagementRecapText(igResults, tiktokResults, formattedDate, clientId);
