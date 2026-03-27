@@ -39,6 +39,13 @@ function normalizeUsername(username) {
     .toLowerCase();
 }
 
+function normalizeSourceType(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+}
+
 // Ambil likes lama (existing) dari database dan kembalikan sebagai array string
 async function getExistingLikes(shortcode) {
   const res = await query(
@@ -137,21 +144,39 @@ async function fetchAndStoreLikes(shortcode, client_id = null, snapshotWindow = 
  */
 export async function handleFetchLikesInstagram(waClient, chatId, client_id, options = {}) {
   try {
-    // Ambil semua post IG milik client hari ini
-    const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth() + 1).padStart(2, "0");
-    const dd = String(today.getDate()).padStart(2, "0");
-    const { rows } = await query(
-      `SELECT shortcode FROM insta_post WHERE client_id = $1 AND DATE(created_at) = $2`,
-      [client_id, `${yyyy}-${mm}-${dd}`]
-    );
+    const normalizedShortcodes = Array.isArray(options.shortcodes)
+      ? [...new Set(options.shortcodes.map((item) => String(item || "").trim()).filter(Boolean))]
+      : [];
+
+    const sourceType = normalizeSourceType(options.sourceType);
+    const filterManualOnly = sourceType === "manual_input";
+
+    let rows = [];
+    if (normalizedShortcodes.length) {
+      rows = normalizedShortcodes.map((shortcode) => ({ shortcode }));
+    } else {
+      // Ambil semua post IG milik client hari ini (mode existing / backward compatible)
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, "0");
+      const dd = String(today.getDate()).padStart(2, "0");
+      const result = await query(
+        `SELECT shortcode
+         FROM insta_post
+         WHERE client_id = $1
+           AND DATE(created_at) = $2
+           AND ($3::boolean = false OR COALESCE(LOWER(TRIM(source_type)), 'cron_fetch') = 'manual_input')`,
+        [client_id, `${yyyy}-${mm}-${dd}`, filterManualOnly]
+      );
+      rows = result.rows;
+    }
 
     if (!rows.length) {
       if (waClient && chatId) {
+        const emptyLabel = filterManualOnly ? " manual hari ini" : " hari ini";
         await waClient.sendMessage(
           chatId,
-          `Tidak ada konten IG hari ini untuk client ${client_id}.`
+          `Tidak ada konten IG${emptyLabel} untuk client ${client_id}.`
         );
       }
       return;

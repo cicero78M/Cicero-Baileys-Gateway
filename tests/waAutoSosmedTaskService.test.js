@@ -265,7 +265,7 @@ describe('DM path  registered operator', () => {
       igUrls: ['https://instagram.com/p/xyz'],
       tiktokUrls: ['https://www.tiktok.com/@a/video/123'],
     });
-    mockFetchSinglePostKhusus.mockResolvedValue({ like_count: 55 });
+    mockFetchSinglePostKhusus.mockResolvedValue({ shortcode: 'xyz', like_count: 55 });
     mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ videoId: '123', commentCount: 10 });
     mockGetCommentsByVideoId.mockResolvedValue({ comments: ['@alpha'] });
     mockGetUsersByClientFull.mockResolvedValue([
@@ -307,7 +307,16 @@ describe('DM path  registered operator', () => {
     expect(texts[2]).toMatch(/Daftar tugas/);
 
     // Engagement sync handlers were called after post fetch
-    expect(mockHandleFetchLikesInstagram).toHaveBeenCalledWith(null, null, clientId);
+    expect(mockHandleFetchLikesInstagram).toHaveBeenCalledWith(
+      null,
+      null,
+      clientId,
+      {
+        shortcodes: ['xyz'],
+        sourceType: 'manual_input',
+        enrichComments: false,
+      }
+    );
     expect(mockHandleFetchKomentarTiktokBatch).toHaveBeenCalledWith(
       null,
       null,
