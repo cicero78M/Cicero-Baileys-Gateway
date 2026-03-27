@@ -150,10 +150,12 @@ export async function resolveClientIdForGroup(groupJid) {
  */
 export async function getActiveClients() {
   const result = await query(
-    `SELECT client_id, client_name, status, created_at
+    `SELECT client_id,
+            COALESCE(NULLIF(nama, ''), client_id) AS client_name,
+            client_status AS status
      FROM clients 
-     WHERE status = 'active'
-     ORDER BY client_name ASC`
+     WHERE client_status = true
+     ORDER BY COALESCE(NULLIF(nama, ''), client_id) ASC`
   );
   return result.rows;
 }

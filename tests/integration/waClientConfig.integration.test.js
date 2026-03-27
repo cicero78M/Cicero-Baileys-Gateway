@@ -64,20 +64,18 @@ describe('WhatsApp Client Configuration Integration', () => {
       }
       
       // Active clients query
-      if (sql.includes('SELECT client_id, client_name, status') && sql.includes("status = 'active'")) {
+      if (sql.includes('COALESCE(NULLIF(nama, \'\'), client_id) AS client_name') && sql.includes('client_status = true')) {
         return Promise.resolve({
           rows: [
             {
               client_id: 'CLIENT_001',
               client_name: 'Production Gateway',
-              status: 'active',
-              created_at: new Date('2026-01-01')
+              status: true
             },
             {
               client_id: 'CLIENT_002', 
               client_name: 'Development Gateway',
-              status: 'active',
-              created_at: new Date('2026-01-02')
+              status: true
             }
           ]
         });
@@ -232,7 +230,7 @@ describe('WhatsApp Client Configuration Integration', () => {
             }]
           });
         }
-        if (sql.includes("status = 'active'")) {
+        if (sql.includes('client_status = true')) {
           return Promise.resolve({ rows: [] }); // No active clients
         }
         return Promise.resolve({ rows: [] });
@@ -263,14 +261,14 @@ describe('WhatsApp Client Configuration Integration', () => {
           });
         }
         
-        if (sql.includes("status = 'active'")) {
+        if (sql.includes('client_status = true')) {
           // First call returns active clients, second call returns empty (client became inactive)
           if (callCount <= 2) {
             return Promise.resolve({
               rows: [{
                 client_id: 'CLIENT_001',
                 client_name: 'Production Gateway',
-                status: 'active'
+                status: true
               }]
             });
           } else {
@@ -385,18 +383,18 @@ describe('WhatsApp Client Configuration Integration', () => {
           });
         }
         
-        if (sql.includes("status = 'active'")) {
+        if (sql.includes('client_status = true')) {
           return Promise.resolve({
             rows: [
               {
                 client_id: 'CLIENT_001',
                 client_name: 'Production Gateway',
-                status: 'active'
+                status: true
               },
               {
                 client_id: 'CLIENT_002',
                 client_name: 'Development Gateway',
-                status: 'active'
+                status: true
               }
             ]
           });

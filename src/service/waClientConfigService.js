@@ -37,14 +37,15 @@ async function getUnrestrictedActiveClients(phoneNumber) {
 
   try {
     const withActiveFilter = await query(
-      `SELECT client_id, client_name
+      `SELECT client_id,
+              COALESCE(NULLIF(nama, ''), client_id) AS client_name
        FROM clients
-       WHERE is_active = true
-       ORDER BY client_name ASC`
+       WHERE client_status = true
+       ORDER BY COALESCE(NULLIF(nama, ''), client_id) ASC`
     );
-    clients = withActiveFilter.rows || [];
+    clients = normalizeClientList(withActiveFilter.rows || []);
   } catch (fallbackErr) {
-    logger.warn('Fallback query with is_active failed. Trying unrestricted query:', {
+    logger.warn('Fallback query with client_status failed. Trying unrestricted query:', {
       phoneNumber,
       error: fallbackErr.message
     });
@@ -56,11 +57,12 @@ async function getUnrestrictedActiveClients(phoneNumber) {
 
   try {
     const unrestricted = await query(
-      `SELECT client_id, client_name
+      `SELECT client_id,
+              COALESCE(NULLIF(nama, ''), client_id) AS client_name
        FROM clients
-       ORDER BY client_name ASC`
+       ORDER BY COALESCE(NULLIF(nama, ''), client_id) ASC`
     );
-    clients = unrestricted.rows || [];
+    clients = normalizeClientList(unrestricted.rows || []);
   } catch (unrestrictedErr) {
     logger.error('Unrestricted clients query failed:', {
       phoneNumber,
@@ -68,7 +70,18 @@ async function getUnrestrictedActiveClients(phoneNumber) {
     });
   }
 
-  return Array.isArray(clients) ? clients : [];
+  return normalizeClientList(clients);
+}
+
+function normalizeClientList(clients) {
+  if (!Array.isArray(clients)) {
+    return [];
+  }
+
+  return clients.map((client) => ({
+    ...client,
+    client_name: client.client_name || client.nama || client.client_id
+  }));
 }
 
 /**
