@@ -389,7 +389,7 @@ export async function getMostModifiedConfigs(pool, {
  */
 export async function cleanupOldAuditLogs(pool, retentionDays = 365) {
   const result = await pool.query(
-    'DELETE FROM client_config_audit_log WHERE created_at < NOW() - INTERVAL \'%s days\'',
+    'DELETE FROM client_config_audit_log WHERE created_at < NOW() - ($1::int * INTERVAL \'1 day\')',
     [retentionDays]
   );
 

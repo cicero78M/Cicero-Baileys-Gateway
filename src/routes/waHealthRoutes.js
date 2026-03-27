@@ -2,6 +2,7 @@ import express from 'express';
 import { getWaReadinessSummary } from '../service/waService.js';
 import { getMessageDedupStats } from '../service/waEventAggregator.js';
 import { getConfirmationStoreStat } from '../service/pendingConfirmationStore.js';
+import { getWaClientConfigMetrics } from '../service/waClientConfigMetrics.js';
 
 const router = express.Router();
 
@@ -23,6 +24,7 @@ router.get('/', async (req, res) => {
       dedupMap: getMessageDedupStats(),
       confirmationStore: getConfirmationStoreStat(),
     },
+    waClientConfig: getWaClientConfigMetrics(),
   });
 });
 

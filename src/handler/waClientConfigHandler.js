@@ -15,6 +15,10 @@ import {
 import { ConfigSessionService } from '../service/configSessionService.js';
 import { SESSION_STAGES } from '../model/configSessionModel.js';
 import { InputParser } from '../utils/configValidator.js';
+import {
+  incrementWaClientConfigCounter,
+  recordWaClientConfigOperation
+} from '../service/waClientConfigMetrics.js';
 
 // Command patterns for configuration management
 const CONFIG_COMMAND_PATTERNS = [
@@ -194,10 +198,17 @@ export async function waClientConfigHandler(context) {
 }
 
 async function handleExtensionRequest(sock, remoteJid, phoneNumber, quotedMessage) {
+  const startedAt = Date.now();
   try {
     const extensionResult = await handleSessionExtension(phoneNumber);
-    return await sendMessage(sock, remoteJid, extensionResult.message, quotedMessage);
+    const success = await sendMessage(sock, remoteJid, extensionResult.message, quotedMessage);
+    recordWaClientConfigOperation('session_extension', Date.now() - startedAt, {
+      handled: true,
+      success: extensionResult.success && success
+    });
+    return success;
   } catch (error) {
+    incrementWaClientConfigCounter('errors');
     logger.error('Error handling session extension:', {
       error: error.message,
       phoneNumber,
@@ -211,6 +222,10 @@ async function handleExtensionRequest(sock, remoteJid, phoneNumber, quotedMessag
       quotedMessage
     );
 
+    recordWaClientConfigOperation('session_extension', Date.now() - startedAt, {
+      handled: true,
+      success: false
+    });
     return true;
   }
 }
@@ -224,6 +239,7 @@ async function handleExtensionRequest(sock, remoteJid, phoneNumber, quotedMessag
  * @returns {Promise<boolean>} Handler success
  */
 async function handleConfigurationInitiation(sock, remoteJid, phoneNumber, quotedMessage) {
+  const startedAt = Date.now();
   try {
     logger.info('Processing configuration initiation:', {
       phoneNumber,
@@ -248,10 +264,16 @@ async function handleConfigurationInitiation(sock, remoteJid, phoneNumber, quote
         error: sessionResult.error || 'Unknown error'
       });
     }
+
+    recordWaClientConfigOperation('session_initiation', Date.now() - startedAt, {
+      handled: true,
+      success: sessionResult.success && success
+    });
     
     return success;
     
   } catch (error) {
+    incrementWaClientConfigCounter('errors');
     logger.error('Error handling configuration initiation:', {
       error: error.message,
       phoneNumber,
@@ -265,6 +287,10 @@ async function handleConfigurationInitiation(sock, remoteJid, phoneNumber, quote
       quotedMessage
     );
     
+    recordWaClientConfigOperation('session_initiation', Date.now() - startedAt, {
+      handled: true,
+      success: false
+    });
     return true;
   }
 }
@@ -279,6 +305,7 @@ async function handleConfigurationInitiation(sock, remoteJid, phoneNumber, quote
  * @returns {Promise<boolean>} Handler success
  */
 async function handleClientSelection(sock, remoteJid, phoneNumber, selection, quotedMessage) {
+  const startedAt = Date.now();
   try {
     logger.info('Processing client selection:', {
       phoneNumber,
@@ -305,10 +332,16 @@ async function handleClientSelection(sock, remoteJid, phoneNumber, selection, qu
         error: selectionResult.error || 'Unknown error'
       });
     }
+
+    recordWaClientConfigOperation('client_selection', Date.now() - startedAt, {
+      handled: true,
+      success: selectionResult.success && success
+    });
     
     return success;
     
   } catch (error) {
+    incrementWaClientConfigCounter('errors');
     logger.error('Error handling client selection:', {
       error: error.message,
       phoneNumber,
@@ -323,6 +356,10 @@ async function handleClientSelection(sock, remoteJid, phoneNumber, selection, qu
       quotedMessage
     );
     
+    recordWaClientConfigOperation('client_selection', Date.now() - startedAt, {
+      handled: true,
+      success: false
+    });
     return true;
   }
 }
@@ -337,6 +374,7 @@ async function handleClientSelection(sock, remoteJid, phoneNumber, selection, qu
  * @returns {Promise<boolean>} Handler success
  */
 async function handleYesNoResponse(sock, remoteJid, phoneNumber, response, quotedMessage) {
+  const startedAt = Date.now();
   try {
     logger.info('Processing yes/no response:', {
       phoneNumber,
@@ -357,10 +395,16 @@ async function handleYesNoResponse(sock, remoteJid, phoneNumber, response, quote
         nextStage: responseResult.nextStage
       }); 
     }
+
+    recordWaClientConfigOperation('yes_no_response', Date.now() - startedAt, {
+      handled: true,
+      success: responseResult.success && success
+    });
     
     return success;
     
   } catch (error) {
+    incrementWaClientConfigCounter('errors');
     logger.error('Error handling yes/no response:', {
       error: error.message,
       phoneNumber,
@@ -375,6 +419,10 @@ async function handleYesNoResponse(sock, remoteJid, phoneNumber, response, quote
       quotedMessage
     );
     
+    recordWaClientConfigOperation('yes_no_response', Date.now() - startedAt, {
+      handled: true,
+      success: false
+    });
     return true;
   }
 }
@@ -389,6 +437,7 @@ async function handleYesNoResponse(sock, remoteJid, phoneNumber, response, quote
  * @returns {Promise<boolean>} Handler success
  */
 async function handleConfigurationInput(sock, remoteJid, phoneNumber, input, quotedMessage) {
+  const startedAt = Date.now();
   try {
     // Only process if there's an active configuration session
     // This will be implemented in subsequent user stories
@@ -412,6 +461,11 @@ async function handleConfigurationInput(sock, remoteJid, phoneNumber, input, quo
           stage: modificationResult.nextStage
         });
       }
+
+      recordWaClientConfigOperation('configuration_modification', Date.now() - startedAt, {
+        handled: true,
+        success: modificationResult.success && success
+      });
       
       return success;
     }
@@ -420,6 +474,7 @@ async function handleConfigurationInput(sock, remoteJid, phoneNumber, input, quo
     return false;
     
   } catch (error) {
+    incrementWaClientConfigCounter('errors');
     logger.error('Error handling configuration input:', {
       error: error.message,
       phoneNumber,
@@ -429,6 +484,10 @@ async function handleConfigurationInput(sock, remoteJid, phoneNumber, input, quo
     
     // Only send error if this was definitely a configuration session
     // For now, return false to let other handlers try
+    recordWaClientConfigOperation('configuration_modification', Date.now() - startedAt, {
+      handled: true,
+      success: false
+    });
     return false;
   }
 }

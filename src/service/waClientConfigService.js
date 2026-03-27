@@ -22,6 +22,7 @@ import { SESSION_STAGES } from '../model/configSessionModel.js';
 import { CONFIG_GROUPS } from '../model/clientConfigModel.js';
 import { ConfigValidator, InputParser } from '../utils/configValidator.js';
 import { query } from '../db/index.js';
+import { incrementWaClientConfigCounter } from './waClientConfigMetrics.js';
 
 // Session constants
 const SESSION_TIMEOUT_MINUTES = 10;
@@ -365,6 +366,7 @@ async function logAuditEntry({
 }
 
 async function rollbackInactiveClientSession(session) {
+  incrementWaClientConfigCounter('pendingRollbacks');
   await logAuditEntry({
     sessionId: session.session_id,
     clientId: session.client_id,
@@ -536,6 +538,7 @@ export async function initiateConfigurationSession(phoneNumber) {
       sessionId: session.session_id,
       clientCount: accessibleClients.length
     });
+    incrementWaClientConfigCounter('sessionsStarted');
     
     return {
       success: true,
@@ -545,6 +548,7 @@ export async function initiateConfigurationSession(phoneNumber) {
     };
     
   } catch (error) {
+    incrementWaClientConfigCounter('errors');
     logger.error('Error initiating configuration session:', {
       error: error.message,
       stack: error.stack,
@@ -657,6 +661,7 @@ export async function processClientSelection(phoneNumber, selection) {
     };
     
   } catch (error) {
+    incrementWaClientConfigCounter('errors');
     logger.error('Error processing client selection:', {
       error: error.message,
       stack: error.stack,
@@ -848,6 +853,8 @@ export async function processYesNoResponse(phoneNumber, response) {
           });
 
           await ConfigSessionService.completeSession(session.session_id, changeSet);
+          incrementWaClientConfigCounter('sessionsCompleted');
+          incrementWaClientConfigCounter('appliedChanges', Object.keys(applyResult.appliedChanges || {}).length);
 
           return {
             success: true,
@@ -864,6 +871,7 @@ export async function processYesNoResponse(phoneNumber, response) {
           changeSummary: `Configuration changes discarded for ${session.client_id}.`
         });
         await ConfigSessionService.deleteSession(session.session_id);
+        incrementWaClientConfigCounter('pendingRollbacks');
 
         return {
           success: true,
@@ -880,6 +888,7 @@ export async function processYesNoResponse(phoneNumber, response) {
     }
     
   } catch (error) {
+    incrementWaClientConfigCounter('errors');
     logger.error('Error processing yes/no response:', {
       error: error.message,
       stack: error.stack,
@@ -1160,6 +1169,7 @@ export async function processConfigurationModification(phoneNumber, input) {
     };
     
   } catch (error) {
+    incrementWaClientConfigCounter('errors');
     logger.error('Error processing configuration modification:', {
       error: error.message,
       phoneNumber,
@@ -1224,6 +1234,7 @@ export async function handleSessionExtension(phoneNumber) {
     };
     
   } catch (error) {
+    incrementWaClientConfigCounter('errors');
     logger.error('Error handling session extension:', {
       error: error.message,
       phoneNumber
@@ -1254,6 +1265,7 @@ export async function cancelConfigurationSession(phoneNumber) {
     }
     
     await ConfigSessionService.deleteSession(session.session_id);
+    incrementWaClientConfigCounter('sessionsCancelled');
     
     logger.info('Configuration session cancelled:', {
       phoneNumber,
@@ -1267,6 +1279,7 @@ export async function cancelConfigurationSession(phoneNumber) {
     };
     
   } catch (error) {
+    incrementWaClientConfigCounter('errors');
     logger.error('Error cancelling configuration session:', {
       error: error.message,
       phoneNumber

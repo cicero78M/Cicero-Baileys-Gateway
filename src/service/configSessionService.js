@@ -4,9 +4,15 @@
 
 import { logger } from '../utils/logger.js';
 import { SESSION_STAGES, SessionWorkflow } from '../model/configSessionModel.js';
+import { recordWaClientConfigCleanup } from './waClientConfigMetrics.js';
 
 // In-memory session store: Map<phoneNumber, sessionObject>
 const sessions = new Map();
+const SESSION_CLEANUP_INTERVAL_MS = Math.max(
+  60_000,
+  Number(process.env.WA_CLIENT_CONFIG_SESSION_CLEANUP_MS) || 300_000
+);
+let cleanupInterval = null;
 
 function generateSessionId() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
@@ -222,6 +228,7 @@ export const ConfigSessionService = {
         count++;
       }
     }
+    recordWaClientConfigCleanup(count, SESSION_CLEANUP_INTERVAL_MS);
     return count;
   },
 
@@ -292,6 +299,42 @@ export const ConfigSessionService = {
     sessions.clear();
   }
 };
+
+export function startSessionCleanupJob() {
+  if (cleanupInterval) {
+    return cleanupInterval;
+  }
+
+  cleanupInterval = setInterval(async () => {
+    try {
+      const removedCount = await ConfigSessionService.cleanupExpiredSessions();
+      if (removedCount > 0) {
+        logger.info('Expired configuration sessions cleaned up:', {
+          removedCount,
+          intervalMs: SESSION_CLEANUP_INTERVAL_MS
+        });
+      }
+    } catch (error) {
+      logger.warn('Configuration session cleanup job failed:', {
+        error: error.message
+      });
+    }
+  }, SESSION_CLEANUP_INTERVAL_MS);
+
+  cleanupInterval.unref?.();
+  return cleanupInterval;
+}
+
+export function stopSessionCleanupJob() {
+  if (!cleanupInterval) {
+    return;
+  }
+
+  clearInterval(cleanupInterval);
+  cleanupInterval = null;
+}
+
+startSessionCleanupJob();
 
 export default ConfigSessionService;
 
