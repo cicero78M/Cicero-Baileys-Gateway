@@ -13,6 +13,7 @@ import {
 } from './operatorRegistrationService.js';
 import { getLikesByShortcode } from '../model/instaLikeModel.js';
 import { getCommentsByVideoId } from '../model/tiktokCommentModel.js';
+import { getUsersByClientFull } from '../model/userModel.js';
 
 // Pool proxy for repositories
 const _pool = { query: (sql, params) => query(sql, params) };
@@ -196,7 +197,73 @@ function buildTaskListText(igShortcodes, tiktokVideoIds, formattedDate) {
   return parts.join('\n\n');
 }
 
-async function buildEngagementRecapText(igResults, tiktokResults, formattedDate) {
+function normalizeHandle(value) {
+  return String(value || '').trim().replace(/^@/, '').toLowerCase();
+}
+
+function formatPersonnelName(user) {
+  const title = String(user?.title || '').trim();
+  const name = String(user?.nama || '-').trim();
+  if (title) return `${title} ${name}`;
+  return name;
+}
+
+function formatPersonnelList(users) {
+  if (!users.length) return '-';
+  return users.map((u) => `- ${formatPersonnelName(u)} (${u.tiktok || '-'})`).join('\n');
+}
+
+async function buildTiktokMenu8Summary(clientId, tiktokResults) {
+  const successfulTikTok = tiktokResults.filter((item) => item.ok && item.data?.videoId);
+  if (!successfulTikTok.length) return null;
+
+  const uniqueCommenters = new Set();
+  for (const item of successfulTikTok) {
+    const videoId = String(item.data.videoId || '').trim();
+    if (!videoId) continue;
+    const commentPayload = await getCommentsByVideoId(videoId).catch(() => ({ comments: [] }));
+    const commenters = Array.isArray(commentPayload?.comments) ? commentPayload.comments : [];
+    commenters
+      .map((uname) => normalizeHandle(uname))
+      .filter(Boolean)
+      .forEach((uname) => uniqueCommenters.add(uname));
+  }
+
+  const roleFilter = String(clientId || '').toLowerCase();
+  const users = await getUsersByClientFull(clientId, roleFilter).catch(() => []);
+  const activeUsers = Array.isArray(users) ? users : [];
+
+  const melaksanakan = [];
+  const belumMelaksanakan = [];
+  const belumIsiUsername = [];
+
+  for (const user of activeUsers) {
+    const normalized = normalizeHandle(user?.tiktok);
+    if (!normalized) {
+      belumIsiUsername.push(user);
+      continue;
+    }
+    if (user?.exception === true || uniqueCommenters.has(normalized)) {
+      melaksanakan.push(user);
+    } else {
+      belumMelaksanakan.push(user);
+    }
+  }
+
+  return (
+    `🎵 *TikTok (Workflow Chakranarayana Menu 8)*\n` +
+    `*Jumlah Konten:* ${successfulTikTok.length}\n` +
+    `*Jumlah Total Personil:* ${activeUsers.length} pers\n` +
+    `✅ *Melaksanakan:* ${melaksanakan.length} pers\n` +
+    `❌ *Belum melaksanakan:* ${belumMelaksanakan.length} pers\n` +
+    `⚠️❌ *Belum Input Username TikTok:* ${belumIsiUsername.length} pers\n\n` +
+    `✅ *Daftar Melaksanakan*\n${formatPersonnelList(melaksanakan)}\n\n` +
+    `❌ *Daftar Belum Melaksanakan*\n${formatPersonnelList(belumMelaksanakan)}\n\n` +
+    `⚠️❌ *Belum Input Username TikTok*\n${formatPersonnelList(belumIsiUsername)}`
+  );
+}
+
+async function buildEngagementRecapText(igResults, tiktokResults, formattedDate, clientId) {
   const igLines = await Promise.all(igResults.map(async ({ url, ok, data }) => {
     if (!ok || !data) return `  ❌ ${url} — data tidak tersedia`;
     const shortcodeMatch = url.match(/(?:instagram\.com\/(?:p|reel|tv)\/|ig\.me\/p\/)([A-Za-z0-9_-]+)/i);
@@ -236,11 +303,51 @@ async function buildEngagementRecapText(igResults, tiktokResults, formattedDate)
     return `  ✅ ${url} — ${commentCount} komentar${partisipanLine}`;
   }));
 
-  const parts = [`*Rekap Tugas Sosmed*\n📅 ${formattedDate}`];
-  if (igLines.length) parts.push(`Instagram (${igLines.length} konten):\n${igLines.join('\n')}`);
-  if (tiktokLines.length) parts.push(`TikTok (${tiktokLines.length} konten):\n${tiktokLines.join('\n')}`);
+  const igSuccess = igResults.filter((item) => item.ok).length;
+  const igFailed = igResults.length - igSuccess;
+  const tiktokSuccess = tiktokResults.filter((item) => item.ok).length;
+  const tiktokFailed = tiktokResults.length - tiktokSuccess;
 
-  return parts.join('\n\n');
+  const igUrls = igResults.map(({ url }) => `- ${url}`);
+  const tiktokUrls = tiktokResults.map(({ url }) => `- ${url}`);
+
+  const sections = [
+    'Mohon ijin Komandan,',
+    `📋 *Rekap Tugas Sosmed (Auto Response)*\n${formattedDate}`,
+  ];
+
+  if (igResults.length) {
+    sections.push(
+      `📸 *Instagram*\n` +
+      `*Jumlah Konten:* ${igResults.length}\n` +
+      `✅ *Melaksanakan:* ${igSuccess} konten\n` +
+      `❌ *Belum melaksanakan:* ${igFailed} konten\n` +
+      `*Daftar Link Konten:*\n${igUrls.join('\n')}\n\n` +
+      `*Detail:*\n${igLines.join('\n')}`
+    );
+  }
+
+  if (tiktokResults.length) {
+    sections.push(
+      `🎵 *TikTok*\n` +
+      `*Jumlah Konten:* ${tiktokResults.length}\n` +
+      `✅ *Melaksanakan:* ${tiktokSuccess} konten\n` +
+      `❌ *Belum melaksanakan:* ${tiktokFailed} konten\n` +
+      `*Daftar Link Konten:*\n${tiktokUrls.join('\n')}\n\n` +
+      `*Detail:*\n${tiktokLines.join('\n')}`
+    );
+  }
+
+  const menu8Summary = await buildTiktokMenu8Summary(clientId, tiktokResults).catch((err) => {
+    logger.warn({ err, clientId }, 'waAutoSosmedTask: failed to build menu 8 summary');
+    return null;
+  });
+  if (menu8Summary) {
+    sections.push(menu8Summary);
+  }
+
+  sections.push('Terimakasih.');
+  return sections.join('\n\n').trim();
 }
 
 async function loadBroadcastConfig(clientId) {
@@ -387,7 +494,7 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
     const { igResults, tiktokResults } = await liveFetchAll(igUrls, tiktokUrls, clientId);
 
     // Response 1: engagement recap (with participants)
-    const recapText = await buildEngagementRecapText(igResults, tiktokResults, formattedDate);
+    const recapText = await buildEngagementRecapText(igResults, tiktokResults, formattedDate, clientId);
     await enqueueSend(dmJid, { text: recapText });
 
     // Response 2: ack
