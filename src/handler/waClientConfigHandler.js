@@ -9,8 +9,12 @@ import {
   initiateConfigurationSession,
   processClientSelection,
   processConfigurationModification,
-  processYesNoResponse
+  processYesNoResponse,
+  handleSessionExtension
 } from '../service/waClientConfigService.js';
+import { ConfigSessionService } from '../service/configSessionService.js';
+import { SESSION_STAGES } from '../model/configSessionModel.js';
+import { InputParser } from '../utils/configValidator.js';
 
 // Command patterns for configuration management
 const CONFIG_COMMAND_PATTERNS = [
@@ -23,9 +27,6 @@ const CONFIG_COMMAND_PATTERNS = [
 
 // Numeric selection pattern for client selection
 const CLIENT_SELECTION_PATTERN = /^[1-9]\d*$/;
-
-// Yes/No response pattern
-const YES_NO_PATTERN = /^(yes|no|y|n)$/i;
 
 /**
  * Extract message text from various WhatsApp message formats
@@ -139,14 +140,29 @@ export async function waClientConfigHandler(context) {
     if (isConfigCommand) {
       return await handleConfigurationInitiation(sock, remoteJid, phoneNumber, message);
     }
-    
+
+    const activeSession = await ConfigSessionService.getActiveSession(phoneNumber);
+    if (!activeSession) {
+      return false;
+    }
+
+    if (InputParser.parseExtensionRequest(messageText)) {
+      return await handleExtensionRequest(sock, remoteJid, phoneNumber, message);
+    }
+
     // Check if this is a client selection (numeric input)
-    if (CLIENT_SELECTION_PATTERN.test(messageText)) {
+    if (
+      activeSession.current_stage === SESSION_STAGES.SELECTING_CLIENT &&
+      CLIENT_SELECTION_PATTERN.test(messageText)
+    ) {
       return await handleClientSelection(sock, remoteJid, phoneNumber, messageText, message);
     }
     
     // Check if this is a yes/no response
-    if (YES_NO_PATTERN.test(messageText)) {
+    if (
+      activeSession.current_stage === SESSION_STAGES.VIEWING_CONFIG &&
+      InputParser.parseYesNo(messageText) !== null
+    ) {
       return await handleYesNoResponse(sock, remoteJid, phoneNumber, messageText, message);  
     }
     
@@ -170,6 +186,28 @@ export async function waClientConfigHandler(context) {
     );
     
     return true; // Mark as handled to prevent further processing
+  }
+}
+
+async function handleExtensionRequest(sock, remoteJid, phoneNumber, quotedMessage) {
+  try {
+    const extensionResult = await handleSessionExtension(phoneNumber);
+    return await sendMessage(sock, remoteJid, extensionResult.message, quotedMessage);
+  } catch (error) {
+    logger.error('Error handling session extension:', {
+      error: error.message,
+      phoneNumber,
+      remoteJid
+    });
+
+    await sendMessage(
+      sock,
+      remoteJid,
+      'Session extension failed. Please try again or restart with /config.',
+      quotedMessage
+    );
+
+    return true;
   }
 }
 

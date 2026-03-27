@@ -3,6 +3,7 @@
 // In-memory session store — no DB migrations required
 
 import { logger } from '../utils/logger.js';
+import { SESSION_STAGES, SessionWorkflow } from '../model/configSessionModel.js';
 
 // In-memory session store: Map<phoneNumber, sessionObject>
 const sessions = new Map();
@@ -30,7 +31,7 @@ export const ConfigSessionService = {
       session_id: generateSessionId(),
       phone_number: phoneNumber,
       client_id: clientId || null,
-      current_stage: 'selecting_client',
+      current_stage: SESSION_STAGES.SELECTING_CLIENT,
       configuration_group: null,
       pending_changes: {},
       original_state: originalState,
@@ -67,6 +68,13 @@ export const ConfigSessionService = {
       if (session.session_id === sessionId) {
         if (newStage && typeof newStage === 'object' && !Array.isArray(newStage)) {
           const { current_stage: currentStage, ...legacyUpdates } = newStage;
+          if (
+            currentStage &&
+            currentStage !== session.current_stage &&
+            !SessionWorkflow.canTransition(session.current_stage, currentStage)
+          ) {
+            throw new Error(`Invalid session stage transition: ${session.current_stage} -> ${currentStage}`);
+          }
           Object.assign(session, {
             current_stage: currentStage ?? session.current_stage,
             ...legacyUpdates,
@@ -75,11 +83,27 @@ export const ConfigSessionService = {
           return session;
         }
 
+        if (
+          newStage &&
+          newStage !== session.current_stage &&
+          !SessionWorkflow.canTransition(session.current_stage, newStage)
+        ) {
+          throw new Error(`Invalid session stage transition: ${session.current_stage} -> ${newStage}`);
+        }
+
         Object.assign(session, { current_stage: newStage, ...additionalUpdates, updated_at: new Date() });
         return session;
       }
     }
     return null;
+  },
+
+  async setViewingConfiguration(sessionId, clientId, originalState = {}) {
+    return this.updateSessionStage(sessionId, SESSION_STAGES.VIEWING_CONFIG, {
+      client_id: clientId,
+      original_state: originalState,
+      configuration_group: null
+    });
   },
 
   async deleteSession(sessionId) {
@@ -246,6 +270,10 @@ export const ConfigSessionService = {
       await this.rollbackSession(sessionId, 'client_status_check_failed');
       return false;
     }
+  },
+
+  async resetAllSessions() {
+    sessions.clear();
   }
 };
 

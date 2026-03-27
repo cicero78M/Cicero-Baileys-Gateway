@@ -10,14 +10,89 @@ import {
   getFormattedClientConfiguration,
   formatClientListDisplay,
   formatConfigurationDisplay,
+  formatGroupSelectionDisplay,
   hasClientCustomConfiguration
 } from '../service/clientConfigService.js';
 import { ConfigSessionService } from '../service/configSessionService.js';
+import { SESSION_STAGES } from '../model/configSessionModel.js';
+import { InputParser } from '../utils/configValidator.js';
 import { query } from '../db/index.js';
 
 // Session constants
 const SESSION_TIMEOUT_MINUTES = 10;
 const MAX_TIMEOUT_EXTENSIONS = 2;
+const CONFIGURATION_OVERVIEW_TTL_MS = 60_000;
+const configurationOverviewCache = new Map();
+
+function getCachedConfigurationOverview(clientId) {
+  const cached = configurationOverviewCache.get(clientId);
+  if (!cached) {
+    return null;
+  }
+
+  if (cached.expiresAt <= Date.now()) {
+    configurationOverviewCache.delete(clientId);
+    return null;
+  }
+
+  return cached.value;
+}
+
+function setCachedConfigurationOverview(clientId, value) {
+  configurationOverviewCache.set(clientId, {
+    value,
+    expiresAt: Date.now() + CONFIGURATION_OVERVIEW_TTL_MS
+  });
+}
+
+function buildEmptyConfigurationGroups() {
+  return {
+    connection: {
+      displayName: 'Connection Settings',
+      parameters: []
+    },
+    message_handling: {
+      displayName: 'Message Handling',
+      parameters: []
+    },
+    notifications: {
+      displayName: 'Notifications',
+      parameters: []
+    },
+    automation_rules: {
+      displayName: 'Automation Rules',
+      parameters: []
+    }
+  };
+}
+
+async function getConfigurationOverview(clientId) {
+  const cached = getCachedConfigurationOverview(clientId);
+  if (cached) {
+    return cached;
+  }
+
+  const groupedConfig = await getFormattedClientConfiguration(clientId, true);
+  const normalizedGroupedConfig = {
+    ...buildEmptyConfigurationGroups(),
+    ...groupedConfig
+  };
+  const message = await formatConfigurationDisplay(clientId, normalizedGroupedConfig);
+  const hasCustomConfig = await hasClientCustomConfiguration(clientId);
+
+  const overview = {
+    groupedConfig: normalizedGroupedConfig,
+    message,
+    hasCustomConfig
+  };
+
+  setCachedConfigurationOverview(clientId, overview);
+  return overview;
+}
+
+export function clearConfigurationOverviewCache() {
+  configurationOverviewCache.clear();
+}
 
 async function getUnrestrictedActiveClients(phoneNumber) {
   let clients = [];
@@ -192,7 +267,7 @@ export async function processClientSelection(phoneNumber, selection) {
     }
     
     // Validate session stage
-    if (session.current_stage !== 'selecting_client') {
+    if (session.current_stage !== SESSION_STAGES.SELECTING_CLIENT) {
       return {
         success: false,
         error: 'INVALID_STAGE',
@@ -247,15 +322,13 @@ export async function processClientSelection(phoneNumber, selection) {
     }
     
     // Update session with selected client
-    await ConfigSessionService.updateSessionStage(
+    const configurationOverview = await getConfigurationOverview(selectedClient.client_id);
+
+    await ConfigSessionService.setViewingConfiguration(
       session.session_id,
-      'viewing_config',
-      { client_id: selectedClient.client_id }
+      selectedClient.client_id,
+      configurationOverview.groupedConfig
     );
-    
-    // Get and format client configuration
-    const clientConfig = await getFormattedClientConfiguration(selectedClient.client_id, true);
-    const configDisplayMessage = await formatConfigurationDisplay(selectedClient.client_id, clientConfig);
     
     logger.info('Client selected for configuration:', {
       phoneNumber,
@@ -268,8 +341,8 @@ export async function processClientSelection(phoneNumber, selection) {
       success: true,
       clientId: selectedClient.client_id,
       clientName: selectedClient.client_name,
-      message: configDisplayMessage,
-      hasCustomConfig: await hasClientCustomConfiguration(selectedClient.client_id)
+      message: configurationOverview.message,
+      hasCustomConfig: configurationOverview.hasCustomConfig
     };
     
   } catch (error) {
@@ -315,33 +388,29 @@ export async function processYesNoResponse(phoneNumber, response) {
       };
     }
     
-    const normalizedResponse = response.toLowerCase();
-    const isYes = ['yes', 'y'].includes(normalizedResponse);
-    const isNo = ['no', 'n'].includes(normalizedResponse);
-    
-    if (!isYes && !isNo) {
+    const normalizedResponse = InputParser.parseYesNo(response);
+
+    if (normalizedResponse === null) {
       return {
         success: false,
         error: 'INVALID_RESPONSE',
-        message: 'Please respond with "yes" or "no" (or "y" or "n").'
+        message: 'Please respond with yes or no so the configuration workflow can continue.'
       };
     }
     
     // Handle response based on current stage
     switch (session.current_stage) {
-      case 'viewing_config':
-        if (isYes) {
-          // User wants to modify configuration - advance to group selection
-          // This will be implemented in User Story 3
+      case SESSION_STAGES.VIEWING_CONFIG:
+        if (normalizedResponse) {
           await ConfigSessionService.updateSessionStage(
             session.session_id,
-            'selecting_group'
+            SESSION_STAGES.SELECTING_GROUP
           );
           
           return {
             success: true,
-            nextStage: 'selecting_group',
-            message: 'Configuration modification will be available in the next update. For now, session completed.\n\nThank you for using the configuration management system.'
+            nextStage: SESSION_STAGES.SELECTING_GROUP,
+            message: await formatGroupSelectionDisplay()
           };
         } else {
           // User doesn't want to modify - end session
@@ -350,7 +419,7 @@ export async function processYesNoResponse(phoneNumber, response) {
           return {
             success: true,
             nextStage: 'completed',
-            message: '✅ CONFIGURATION REVIEW COMPLETED\n\nNo changes requested. Session ended.\n\nThank you for using the configuration management system.'
+            message: `✅ CONFIGURATION REVIEW COMPLETED\n\nNo changes were made to ${session.client_id}.\nSession ended.`
           };
         }
         

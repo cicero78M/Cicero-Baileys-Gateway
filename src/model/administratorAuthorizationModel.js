@@ -2,8 +2,6 @@
 // Administrator Authorization Model - WhatsApp Configuration Management
 // Handles phone number validation and permission management
 
-import { query } from '../db/index.js';
-
 /**
  * Permission level definitions
  */

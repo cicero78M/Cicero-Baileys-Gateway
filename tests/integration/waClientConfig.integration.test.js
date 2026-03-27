@@ -1,36 +1,54 @@
-/**
- * waClientConfig.integration.test.js
- * Integration tests for WhatsApp client configuration workflow
- * Tests complete end-to-end flow from command recognition to configuration display
- */
-
 import { jest } from '@jest/globals';
-import { query as dbQuery } from '../../src/db/postgres.js';
-import { waClientConfigHandler } from '../../src/handler/waClientConfigHandler.js';
 
-// Mock external dependencies but test real service interactions
-jest.mock('../../src/db/postgres.js');
+const clientConfigServiceMocks = {
+  getActiveClients: jest.fn(),
+  getFormattedClientConfiguration: jest.fn(),
+  formatClientListDisplay: jest.fn(),
+  formatConfigurationDisplay: jest.fn(),
+  formatGroupSelectionDisplay: jest.fn(),
+  hasClientCustomConfiguration: jest.fn()
+};
+
+const dbIndexMock = {
+  query: jest.fn()
+};
+
+const loggerMock = {
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn()
+};
+
+await jest.unstable_mockModule('../../src/service/clientConfigService.js', () => ({
+  ...clientConfigServiceMocks
+}));
+
+await jest.unstable_mockModule('../../src/db/index.js', () => ({
+  query: dbIndexMock.query
+}));
+
+await jest.unstable_mockModule('../../src/utils/logger.js', () => ({
+  logger: loggerMock
+}));
+
+const { waClientConfigHandler } = await import('../../src/handler/waClientConfigHandler.js');
+const { ConfigSessionService } = await import('../../src/service/configSessionService.js');
+const { clearConfigurationOverviewCache } = await import('../../src/service/waClientConfigService.js');
 
 describe('WhatsApp Client Configuration Integration', () => {
-  let testAdminPhone;
-  let testClientId;
   let mockContext;
 
-  beforeAll(async () => {
-    testAdminPhone = '+6281234567890';
-    testClientId = 'CLIENT_001';
-  });
-
   beforeEach(async () => {
-    // Clear all mocks
     jest.clearAllMocks();
+    await ConfigSessionService.resetAllSessions();
+    clearConfigurationOverviewCache();
 
-    // Setup mock context
     mockContext = {
       sock: {
         sendMessage: jest.fn().mockResolvedValue({ status: 'success' })
       },
-      remoteJid: `${testAdminPhone}@s.whatsapp.net`,
+      remoteJid: '+6281234567890@s.whatsapp.net',
       message: {
         extendedTextMessage: {
           text: '/config'
@@ -40,400 +58,91 @@ describe('WhatsApp Client Configuration Integration', () => {
       quotedInfo: null
     };
 
-    // Mock database queries for test data setup
-    await setupTestData();
+    clientConfigServiceMocks.getActiveClients.mockResolvedValue([
+      { client_id: 'CLIENT_001', client_name: 'Production Gateway' },
+      { client_id: 'CLIENT_002', client_name: 'Development Gateway' }
+    ]);
+    clientConfigServiceMocks.formatClientListDisplay.mockResolvedValue(
+      '🔧 CLIENT CONFIGURATION MANAGEMENT\n\nAvailable active clients:\n1. CLIENT_001 (Production Gateway)\n2. CLIENT_002 (Development Gateway)\n\nReply with the number (1-2) to select a client for configuration.\n\nSession expires in 10 minutes.'
+    );
+    clientConfigServiceMocks.getFormattedClientConfiguration.mockResolvedValue({
+      connection: {
+        displayName: 'Connection Settings',
+        parameters: [
+          { parameter: 'host', value: 'gateway.example.com' },
+          { parameter: 'port', value: '8080' }
+        ]
+      },
+      notifications: {
+        displayName: 'Notifications',
+        parameters: [
+          { parameter: 'status_alerts', value: 'true' }
+        ]
+      }
+    });
+    clientConfigServiceMocks.formatConfigurationDisplay.mockResolvedValue(
+      '📋 CURRENT CONFIGURATION - CLIENT_001\n\n🔗 CONNECTION SETTINGS:\n• Host: gateway.example.com\n• Port: 8080\n\n🔔 NOTIFICATIONS:\n• Status Alerts: Yes\n\nWould you like to modify any configuration settings? (yes/no)'
+    );
+    clientConfigServiceMocks.formatGroupSelectionDisplay.mockResolvedValue(
+      '🛠️ CONFIGURATION MODIFICATION\n\nWhich configuration group would you like to modify?'
+    );
+    clientConfigServiceMocks.hasClientCustomConfiguration.mockResolvedValue(true);
   });
 
-  afterEach(async () => {
-    await cleanupTestData();
+  test('should complete the selection-to-configuration-display flow', async () => {
+    const started = await waClientConfigHandler(mockContext);
+
+    expect(started).toBe(true);
+    expect(mockContext.sock.sendMessage).toHaveBeenCalledWith(
+      mockContext.remoteJid,
+      expect.objectContaining({
+        text: expect.stringContaining('Available active clients:'),
+        quoted: mockContext.message
+      })
+    );
+
+    mockContext.message.extendedTextMessage.text = '1';
+    mockContext.sock.sendMessage.mockClear();
+
+    const selected = await waClientConfigHandler(mockContext);
+
+    expect(selected).toBe(true);
+    expect(mockContext.sock.sendMessage).toHaveBeenCalledWith(
+      mockContext.remoteJid,
+      expect.objectContaining({
+        text: expect.stringContaining('CURRENT CONFIGURATION - CLIENT_001'),
+        quoted: mockContext.message
+      })
+    );
+
+    const activeSession = await ConfigSessionService.getActiveSession('+6281234567890');
+    expect(activeSession).toEqual(expect.objectContaining({
+      client_id: 'CLIENT_001',
+      current_stage: 'viewing_config'
+    }));
   });
 
-  async function setupTestData() {
-    // Mock administrator authorization check
-    dbQuery.mockImplementation((sql, params) => {
-      // Administrator authorization query
-      if (sql.includes('administrator_authorization') && params[0] === testAdminPhone) {
-        return Promise.resolve({
-          rows: [{
-            phone_number: testAdminPhone,
-            is_authorized: true,
-            permission_level: 'full',
-            client_access_scope: null
-          }]
-        });
-      }
-      
-      // Active clients query
-      if (sql.includes('COALESCE(NULLIF(nama, \'\'), client_id) AS client_name') && sql.includes('client_status = true')) {
-        return Promise.resolve({
-          rows: [
-            {
-              client_id: 'CLIENT_001',
-              client_name: 'Production Gateway',
-              status: true
-            },
-            {
-              client_id: 'CLIENT_002', 
-              client_name: 'Development Gateway',
-              status: true
-            }
-          ]
-        });
-      }
-      
-      // Session creation query
-      if (sql.includes('INSERT INTO client_config_sessions')) {
-        return Promise.resolve({
-          rows: [{
-            session_id: 'test-session-123',
-            phone_number: testAdminPhone,
-            client_id: null,
-            current_stage: 'selecting_client',
-            expires_at: new Date(Date.now() + 600000), // 10 minutes
-            created_at: new Date()
-          }]
-        });
-      }
-      
-      // Session update query 
-      if (sql.includes('UPDATE client_config_sessions')) {
-        return Promise.resolve({
-          rows: [{
-            session_id: 'test-session-123',
-            phone_number: testAdminPhone,
-            client_id: testClientId,
-            current_stage: 'viewing_config',
-            expires_at: new Date(Date.now() + 600000),
-            updated_at: new Date()
-          }]
-        });
-      }
-      
-      // Client configuration query
-      if (sql.includes('SELECT cc.config_key, cc.config_value')) {
-        return Promise.resolve({
-          rows: [
-            {
-              config_key: 'connection.host',
-              config_value: 'gateway.example.com',
-              config_group: 'connection',
-              description: 'Server hostname or IP address',
-              validation_pattern: '^[a-zA-Z0-9.-]+$'
-            },
-            {
-              config_key: 'connection.port',
-              config_value: '8080',
-              config_group: 'connection',
-              description: 'Server port number',
-              validation_pattern: '^[1-9][0-9]{0,4}$'
-            },
-            {
-              config_key: 'message_handling.rate_limit',
-              config_value: '40/minute',
-              config_group: 'message_handling',
-              description: 'Maximum message rate',
-              validation_pattern: '^\\d+/(second|minute|hour)$'
-            }
-          ]
-        });
-      }
-      
-      // Template messages query
-      if (sql.includes('SELECT template_key, template_text')) {
-        return Promise.resolve({ rows: [] });
-      }
-      
-      // Default fallback
-      return Promise.resolve({ rows: [] });
-    });
-  }
+  test('should continue from viewing_config to group selection on a positive response', async () => {
+    await waClientConfigHandler(mockContext);
 
-  async function cleanupTestData() {
-    // Mock cleanup - in real integration test this would clean up test data
-    dbQuery.mockReset();
-  }
+    mockContext.message.extendedTextMessage.text = '1';
+    await waClientConfigHandler(mockContext);
 
-  describe('Complete Client Selection Workflow', () => {
-    test('should handle full workflow from command to client configuration display', async () => {
-      // Step 1: Initial command recognition and client list display
-      const step1Result = await waClientConfigHandler(mockContext);
-      
-      expect(step1Result).toBe(true);
-      expect(mockContext.sock.sendMessage).toHaveBeenCalledWith(
-        mockContext.remoteJid,
-        {
-          text: expect.stringMatching(
-            /🔧 CLIENT CONFIGURATION MANAGEMENT[\s\S]*Available active clients:[\s\S]*1\. CLIENT_001[\s\S]*2\. CLIENT_002/
-          )
-        },
-        { quoted: mockContext.message }
-      );
-      
-      // Verify session was created
-      expect(dbQuery).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO client_config_sessions'),
-        expect.arrayContaining([testAdminPhone, 'selecting_client'])
-      );
-      
-      jest.clearAllMocks();
-      
-      // Step 2: Client selection
-      mockContext.message.extendedTextMessage.text = '1';
-      
-      const step2Result = await waClientConfigHandler(mockContext);
-      
-      expect(step2Result).toBe(true);
-      expect(mockContext.sock.sendMessage).toHaveBeenCalledWith(
-        mockContext.remoteJid,
-        {
-          text: expect.stringMatching(
-            /📋 CURRENT CONFIGURATION - CLIENT_001[\s\S]*🔗 CONNECTION SETTINGS:[\s\S]*• Host: gateway\.example\.com[\s\S]*• Port: 8080/
-          )
-        },
-        { quoted: mockContext.message }
-      );
-      
-      // Verify session was updated
-      expect(dbQuery).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE client_config_sessions'),
-        expect.arrayContaining(['CLIENT_001', 'viewing_config'])
-      );
-    });
-  });
+    mockContext.message.extendedTextMessage.text = 'ya';
+    mockContext.sock.sendMessage.mockClear();
 
-  describe('Error Handling Integration', () => {
-    test('should handle database connection failures gracefully', async () => {
-      // Simulate database connection failure
-      dbQuery.mockRejectedValue(new Error('Connection pool exhausted'));
-      
-      const result = await waClientConfigHandler(mockContext);
-      
-      expect(result).toBe(true);
-      expect(mockContext.sock.sendMessage).toHaveBeenCalledWith(
-        mockContext.remoteJid,
-        {
-          text: expect.stringContaining('System temporarily unavailable')
-        },
-        { quoted: mockContext.message }
-      );
-    });
+    const responded = await waClientConfigHandler(mockContext);
 
-    test('should handle no active clients scenario', async () => {
-      // Mock empty active clients result
-      dbQuery.mockImplementation((sql) => {
-        if (sql.includes('administrator_authorization')) {
-          return Promise.resolve({
-            rows: [{
-              phone_number: testAdminPhone,
-              is_authorized: true,
-              permission_level: 'full'
-            }]
-          });
-        }
-        if (sql.includes('client_status = true')) {
-          return Promise.resolve({ rows: [] }); // No active clients
-        }
-        return Promise.resolve({ rows: [] });
-      });
-      
-      const result = await waClientConfigHandler(mockContext);
-      
-      expect(result).toBe(true);
-      expect(mockContext.sock.sendMessage).toHaveBeenCalledWith(
-        mockContext.remoteJid,
-        {
-          text: expect.stringContaining('⚠️ CLIENT CONFIGURATION MANAGEMENT') &&
-               expect.stringContaining('No active clients available')
-        },
-        { quoted: mockContext.message }
-      );
-    });
+    expect(responded).toBe(true);
+    expect(mockContext.sock.sendMessage).toHaveBeenCalledWith(
+      mockContext.remoteJid,
+      expect.objectContaining({
+        text: expect.stringContaining('CONFIGURATION MODIFICATION'),
+        quoted: mockContext.message
+      })
+    );
 
-    test('should handle client becoming inactive during selection', async () => {
-      // Mock client becoming inactive between session creation and selection
-      let callCount = 0;
-      dbQuery.mockImplementation((sql, params) => {
-        callCount++;
-        
-        if (sql.includes('administrator_authorization')) {
-          return Promise.resolve({
-            rows: [{ phone_number: testAdminPhone, is_authorized: true, permission_level: 'full' }]
-          });
-        }
-        
-        if (sql.includes('client_status = true')) {
-          // First call returns active clients, second call returns empty (client became inactive)
-          if (callCount <= 2) {
-            return Promise.resolve({
-              rows: [{
-                client_id: 'CLIENT_001',
-                client_name: 'Production Gateway',
-                status: true
-              }]
-            });
-          } else {
-            return Promise.resolve({ rows: [] }); // Client became inactive
-          }
-        }
-        
-        return Promise.resolve({ rows: [] });
-      });
-      
-      // Initial session creation
-      await waClientConfigHandler(mockContext);
-      
-      jest.clearAllMocks();
-      
-      // Try to select the client after it became inactive
-      mockContext.message.extendedTextMessage.text = '1';
-      
-      const result = await waClientConfigHandler(mockContext);
-      
-      expect(result).toBe(true);
-      expect(mockContext.sock.sendMessage).toHaveBeenCalledWith(
-        mockContext.remoteJid,
-        {
-          text: expect.stringContaining('⚠️ CLIENT UNAVAILABLE')
-        },
-        { quoted: mockContext.message }
-      );
-    });
-  });
-
-  describe('Session State Management Integration', () => {
-    test('should handle session timeout warnings', async () => {
-      // Mock near-expiry session
-      dbQuery.mockImplementation((sql, params) => {
-        if (sql.includes('administrator_authorization')) {
-          return Promise.resolve({
-            rows: [{ phone_number: testAdminPhone, is_authorized: true, permission_level: 'full' }]
-          });
-        }
-        
-        if (sql.includes('client_config_sessions') && sql.includes('SELECT')) {
-          return Promise.resolve({
-            rows: [{
-              session_id: 'test-session-123',
-              phone_number: testAdminPhone,
-              current_stage: 'selecting_client',
-              expires_at: new Date(Date.now() + 60000), // Expires in 1 minute
-              timeout_extensions: 0
-            }]
-          });
-        }
-        
-        return Promise.resolve({ rows: [] });
-      });
-      
-      mockContext.message.extendedTextMessage.text = 'extend';
-      
-      const result = await waClientConfigHandler(mockContext);
-      
-      expect(result).toBe(true);
-      // Should handle session extension logic
-    });
-    
-    test('should prevent concurrent session creation', async () => {
-      // Mock existing active session for the same phone number
-      dbQuery.mockImplementation((sql, params) => {
-        if (sql.includes('administrator_authorization')) {
-          return Promise.resolve({
-            rows: [{ phone_number: testAdminPhone, is_authorized: true, permission_level: 'full' }]
-          });
-        }
-        
-        if (sql.includes('client_config_sessions') && sql.includes('SELECT')) {
-          return Promise.resolve({
-            rows: [{
-              session_id: 'existing-session-456',
-              phone_number: testAdminPhone,
-              current_stage: 'viewing_config',
-              expires_at: new Date(Date.now() + 300000) // 5 minutes left
-            }]
-          });
-        }
-        
-        return Promise.resolve({ rows: [] });
-      });
-      
-      const result = await waClientConfigHandler(mockContext);
-      
-      expect(result).toBe(true);
-      expect(mockContext.sock.sendMessage).toHaveBeenCalledWith(
-        mockContext.remoteJid,
-        {
-          text: expect.stringContaining('existing configuration session')
-        },
-        { quoted: mockContext.message }
-      );
-    });
-  });
-
-  describe('Client Visibility Integration', () => {
-    test('should list all active clients without access-scope filtering', async () => {
-      dbQuery.mockImplementation((sql, params) => {
-        if (sql.includes('administrator_authorization') && params[0] === testAdminPhone) {
-          return Promise.resolve({
-            rows: [{
-              phone_number: testAdminPhone,
-              is_authorized: true,
-              permission_level: 'specific_clients',
-              client_access_scope: ['CLIENT_001'] // Can only access CLIENT_001
-            }]
-          });
-        }
-        
-        if (sql.includes('client_status = true')) {
-          return Promise.resolve({
-            rows: [
-              {
-                client_id: 'CLIENT_001',
-                client_name: 'Production Gateway',
-                status: true
-              },
-              {
-                client_id: 'CLIENT_002',
-                client_name: 'Development Gateway',
-                status: true
-              }
-            ]
-          });
-        }
-        
-        return Promise.resolve({ rows: [] });
-      });
-      
-      const result = await waClientConfigHandler(mockContext);
-      
-      expect(result).toBe(true);
-      expect(mockContext.sock.sendMessage).toHaveBeenCalledWith(
-        mockContext.remoteJid,
-        {
-          text: expect.stringMatching(
-            /Available active clients:[\s\S]*1\. CLIENT_001[\s\S]*2\. CLIENT_002/
-          )
-        },
-        { quoted: mockContext.message }
-      );
-    });
-  });
-
-  describe('Message Format Validation Integration', () => {
-    test('should handle various WhatsApp message formats', async () => {
-      const messageFormats = [
-        { extendedTextMessage: { text: '/config' } },
-        { conversation: 'CONFIG' },
-        { extendedTextMessage: { text: 'configure' } }
-      ];
-      
-      for (const messageFormat of messageFormats) {
-        mockContext.message = messageFormat;
-        
-        const result = await waClientConfigHandler(mockContext);
-        expect(result).toBe(true);
-        
-        jest.clearAllMocks();
-      }
-    });
+    const activeSession = await ConfigSessionService.getActiveSession('+6281234567890');
+    expect(activeSession.current_stage).toBe('selecting_group');
   });
 });

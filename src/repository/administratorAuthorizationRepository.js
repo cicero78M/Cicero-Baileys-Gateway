@@ -2,7 +2,6 @@
 // Administrator Authorization Repository - WhatsApp Configuration Management
 // Permission checks and authorization management
 
-import { query } from '../db/index.js';
 import { PhoneNumberUtils, AuthorizationValidation, PERMISSION_LEVELS } from '../model/administratorAuthorizationModel.js';
 
 /**

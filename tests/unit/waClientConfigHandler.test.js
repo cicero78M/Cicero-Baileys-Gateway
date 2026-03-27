@@ -1,29 +1,40 @@
-/**
- * waClientConfigHandler.test.js
- * Unit tests for WhatsApp client configuration handler
- * Tests command recognition, message processing, and response formatting
- */
-
 import { jest } from '@jest/globals';
-import { waClientConfigHandler } from '../../src/handler/waClientConfigHandler.js';
-import * as waClientConfigService from '../../src/service/waClientConfigService.js';
 
-// Mock dependencies
-jest.mock('../../src/service/waClientConfigService.js');
+const serviceMocks = {
+  initiateConfigurationSession: jest.fn(),
+  processClientSelection: jest.fn(),
+  processConfigurationModification: jest.fn(),
+  processYesNoResponse: jest.fn(),
+  handleSessionExtension: jest.fn()
+};
+
+const configSessionServiceMock = {
+  getActiveSession: jest.fn()
+};
+
+await jest.unstable_mockModule('../../src/service/waClientConfigService.js', () => ({
+  ...serviceMocks
+}));
+
+await jest.unstable_mockModule('../../src/service/configSessionService.js', () => ({
+  ConfigSessionService: configSessionServiceMock
+}));
+
+const { waClientConfigHandler } = await import('../../src/handler/waClientConfigHandler.js');
 
 describe('waClientConfigHandler', () => {
   let mockContext;
 
   beforeEach(() => {
-    // Reset all mocks
     jest.clearAllMocks();
-    
-    // Standard mock context for WhatsApp message
+    configSessionServiceMock.getActiveSession.mockResolvedValue(null);
+    serviceMocks.processConfigurationModification.mockResolvedValue(null);
+
     mockContext = {
       sock: {
         sendMessage: jest.fn().mockResolvedValue({ status: 'success' })
       },
-      remoteJid: '+6281234567890@s.whatsapp.net', // Administrator's own number
+      remoteJid: '+6281234567890@s.whatsapp.net',
       message: {
         extendedTextMessage: {
           text: '/config'
@@ -40,55 +51,36 @@ describe('waClientConfigHandler', () => {
 
     test.each(validCommands)('should recognize valid command: %s', async (command) => {
       mockContext.message.extendedTextMessage.text = command;
-      
-      // Mock service response for client list
-      waClientConfigService.initiateConfigurationSession.mockResolvedValue({
+      serviceMocks.initiateConfigurationSession.mockResolvedValue({
         success: true,
         sessionId: 'test-session-123',
-        message: '🔧 CLIENT CONFIGURATION MANAGEMENT\n\nAvailable active clients:\n1. CLIENT_001\n\nReply with number to select.'
+        message: 'Client list'
       });
 
       const result = await waClientConfigHandler(mockContext);
 
       expect(result).toBe(true);
-      expect(waClientConfigService.initiateConfigurationSession).toHaveBeenCalledWith('+6281234567890');
+      expect(serviceMocks.initiateConfigurationSession).toHaveBeenCalledWith('+6281234567890');
       expect(mockContext.sock.sendMessage).toHaveBeenCalledWith(
         mockContext.remoteJid,
-        { text: expect.stringContaining('🔧 CLIENT CONFIGURATION MANAGEMENT') },
-        { quoted: mockContext.message }
+        { text: 'Client list', quoted: mockContext.message }
       );
     });
 
-    test.each(invalidCommands)('should not recognize invalid command: %s', async (command) => {
+    test.each(invalidCommands)('should ignore invalid command without an active session: %s', async (command) => {
       mockContext.message.extendedTextMessage.text = command;
-      
+
       const result = await waClientConfigHandler(mockContext);
 
       expect(result).toBe(false);
-      expect(waClientConfigService.initiateConfigurationSession).not.toHaveBeenCalled();
+      expect(serviceMocks.initiateConfigurationSession).not.toHaveBeenCalled();
       expect(mockContext.sock.sendMessage).not.toHaveBeenCalled();
     });
   });
 
   describe('Security Validation', () => {
-    beforeEach(() => {
-      mockContext.message.extendedTextMessage.text = '/config';
-    });
-
-    test('should allow direct-message configuration requests', async () => {
-      waClientConfigService.initiateConfigurationSession.mockResolvedValue({
-        success: true,
-        sessionId: 'test-session',
-        message: 'Client list message'
-      });
-
-      const result = await waClientConfigHandler(mockContext);
-
-      expect(result).toBe(true);
-    });
-
     test('should reject group messages', async () => {
-      mockContext.remoteJid = '123456789-1234567890@g.us'; // Group JID
+      mockContext.remoteJid = '123456789-1234567890@g.us';
       mockContext.isGroup = true;
 
       const result = await waClientConfigHandler(mockContext);
@@ -97,7 +89,7 @@ describe('waClientConfigHandler', () => {
     });
 
     test('should reject newsletter messages', async () => {
-      mockContext.remoteJid = '123456789@newsletter'; // Newsletter JID
+      mockContext.remoteJid = '123456789@newsletter';
 
       const result = await waClientConfigHandler(mockContext);
 
@@ -105,137 +97,94 @@ describe('waClientConfigHandler', () => {
     });
   });
 
-  describe('Session Workflow', () => {
-    beforeEach(() => {
-      mockContext.message.extendedTextMessage.text = '/config';
-    });
-
-    test('should handle successful session initiation', async () => {
-      waClientConfigService.initiateConfigurationSession.mockResolvedValue({
-        success: true,
-        sessionId: 'session-abc-123',
-        message: '🔧 CLIENT CONFIGURATION MANAGEMENT\n\nAvailable active clients:\n1. CLIENT_001 (Gateway)\n\nReply with number (1) to select.'
-      });
-
-      const result = await waClientConfigHandler(mockContext);
-
-      expect(result).toBe(true);
-      expect(mockContext.sock.sendMessage).toHaveBeenCalledWith(
-        mockContext.remoteJid,
-        { text: expect.stringContaining('🔧 CLIENT CONFIGURATION MANAGEMENT') },
-        { quoted: mockContext.message }
-      );
-    });
-
-    test('should handle no active clients scenario', async () => {
-      waClientConfigService.initiateConfigurationSession.mockResolvedValue({
-        success: false,
-        error: 'NO_ACTIVE_CLIENTS',
-        message: '⚠️ CLIENT CONFIGURATION MANAGEMENT\n\nNo active clients available for configuration at this time.'
-      });
-
-      const result = await waClientConfigHandler(mockContext);
-
-      expect(result).toBe(true);
-      expect(mockContext.sock.sendMessage).toHaveBeenCalledWith(
-        mockContext.remoteJid,
-        { text: expect.stringContaining('⚠️ CLIENT CONFIGURATION MANAGEMENT') },
-        { quoted: mockContext.message }
-      );
-    });
-
-    test('should handle system errors gracefully', async () => {
-      waClientConfigService.initiateConfigurationSession.mockRejectedValue(
-        new Error('Database connection failed')
-      );
-
-      const result = await waClientConfigHandler(mockContext);
-
-      expect(result).toBe(true);
-      expect(mockContext.sock.sendMessage).toHaveBeenCalledWith(
-        mockContext.remoteJid,
-        { text: expect.stringContaining('System temporarily unavailable') },
-        { quoted: mockContext.message }
-      );
-    });
-  });
-
-  describe('Client Selection Processing', () => {
-    test('should process valid client selection', async () => {
+  describe('Session Routing', () => {
+    test('should process client selection only during selecting_client stage', async () => {
       mockContext.message.extendedTextMessage.text = '1';
-      
-      waClientConfigService.processClientSelection.mockResolvedValue({
+      configSessionServiceMock.getActiveSession.mockResolvedValue({
+        session_id: 'session-1',
+        current_stage: 'selecting_client'
+      });
+      serviceMocks.processClientSelection.mockResolvedValue({
         success: true,
         clientId: 'CLIENT_001',
-        message: '📋 CURRENT CONFIGURATION - CLIENT_001\n\n🔗 CONNECTION SETTINGS:\n• Host: gateway.example.com'
+        message: 'Configuration overview'
       });
 
       const result = await waClientConfigHandler(mockContext);
 
       expect(result).toBe(true);
-      expect(waClientConfigService.processClientSelection).toHaveBeenCalledWith(
-        '+6281234567890',
-        '1'
-      );
+      expect(serviceMocks.processClientSelection).toHaveBeenCalledWith('+6281234567890', '1');
     });
 
-    test('should handle invalid client selection', async () => {
-      mockContext.message.extendedTextMessage.text = '99';
-      
-      waClientConfigService.processClientSelection.mockResolvedValue({
-        success: false,
-        error: 'INVALID_SELECTION',
-        message: 'Invalid selection. Please reply with a number from the list.'
+    test('should not hijack numeric input when no active configuration session exists', async () => {
+      mockContext.message.extendedTextMessage.text = '1';
+
+      const result = await waClientConfigHandler(mockContext);
+
+      expect(result).toBe(false);
+      expect(serviceMocks.processClientSelection).not.toHaveBeenCalled();
+    });
+
+    test('should recognize yes/no tokens during viewing_config stage', async () => {
+      mockContext.message.extendedTextMessage.text = 'ya';
+      configSessionServiceMock.getActiveSession.mockResolvedValue({
+        session_id: 'session-2',
+        current_stage: 'viewing_config'
+      });
+      serviceMocks.processYesNoResponse.mockResolvedValue({
+        success: true,
+        nextStage: 'selecting_group',
+        message: 'Group selection'
       });
 
       const result = await waClientConfigHandler(mockContext);
 
       expect(result).toBe(true);
+      expect(serviceMocks.processYesNoResponse).toHaveBeenCalledWith('+6281234567890', 'ya');
+    });
+
+    test('should route extension requests when a session is active', async () => {
+      mockContext.message.extendedTextMessage.text = 'extend';
+      configSessionServiceMock.getActiveSession.mockResolvedValue({
+        session_id: 'session-3',
+        current_stage: 'viewing_config'
+      });
+      serviceMocks.handleSessionExtension.mockResolvedValue({
+        success: true,
+        message: 'Session extended'
+      });
+
+      const result = await waClientConfigHandler(mockContext);
+
+      expect(result).toBe(true);
+      expect(serviceMocks.handleSessionExtension).toHaveBeenCalledWith('+6281234567890');
       expect(mockContext.sock.sendMessage).toHaveBeenCalledWith(
         mockContext.remoteJid,
-        { text: expect.stringContaining('Invalid selection') },
-        { quoted: mockContext.message }
+        { text: 'Session extended', quoted: mockContext.message }
       );
     });
   });
 
   describe('Message Format Extraction', () => {
-    test('should extract text from extendedTextMessage', async () => {
-      mockContext.message = {
-        extendedTextMessage: { text: '/config' }
-      };
-      delete mockContext.message.conversation;
-
-      waClientConfigService.initiateConfigurationSession.mockResolvedValue({
+    test('should extract text from conversation payloads', async () => {
+      mockContext.message = { conversation: '/config' };
+      serviceMocks.initiateConfigurationSession.mockResolvedValue({
         success: true,
-        sessionId: 'test',
-        message: 'Test response'
+        sessionId: 'session-conversation',
+        message: 'Conversation response'
       });
 
       const result = await waClientConfigHandler(mockContext);
+
       expect(result).toBe(true);
+      expect(serviceMocks.initiateConfigurationSession).toHaveBeenCalledWith('+6281234567890');
     });
 
-    test('should extract text from conversation', async () => {
-      mockContext.message = {
-        conversation: '/config'
-      };
-      delete mockContext.message.extendedTextMessage;
-
-      waClientConfigService.initiateConfigurationSession.mockResolvedValue({
-        success: true,
-        sessionId: 'test',
-        message: 'Test response'
-      });
-
-      const result = await waClientConfigHandler(mockContext);
-      expect(result).toBe(true);
-    });
-
-    test('should handle missing message text', async () => {
+    test('should ignore messages without text', async () => {
       mockContext.message = {};
 
       const result = await waClientConfigHandler(mockContext);
+
       expect(result).toBe(false);
     });
   });

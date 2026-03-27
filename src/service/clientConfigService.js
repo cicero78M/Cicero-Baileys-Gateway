@@ -281,6 +281,12 @@ export async function formatConfigurationDisplay(clientId, groupedConfig) {
   const templates = await getMessageTemplates();
   
   let message = `${templates.config_display_header} - ${clientId}\n\n`;
+  const groupIcons = {
+    [CONFIG_GROUPS.CONNECTION]: '🔗',
+    [CONFIG_GROUPS.MESSAGE_HANDLING]: '📨',
+    [CONFIG_GROUPS.NOTIFICATIONS]: '🔔',
+    [CONFIG_GROUPS.AUTOMATION_RULES]: '⚙️'
+  };
   
   // Define display order for groups
   const displayOrder = [
@@ -293,9 +299,14 @@ export async function formatConfigurationDisplay(clientId, groupedConfig) {
   for (const group of displayOrder) {
     if (groupedConfig[group]) {
       const groupData = groupedConfig[group];
-      message += `🔗 ${groupData.displayName.toUpperCase()}:\n`;
-      
-      for (const param of groupData.parameters) {
+      message += `${groupIcons[group] || '•'} ${groupData.displayName.toUpperCase()}:\n`;
+
+      if (!Array.isArray(groupData.parameters) || groupData.parameters.length === 0) {
+        message += '• No explicit settings configured.\n';
+        message += '• Default values will be used until this section is updated.\n';
+      }
+
+      for (const param of groupData.parameters || []) {
         const displayValue = formatParameterValue(param.parameter, param.value);
         message += `• ${formatParameterName(param.parameter)}: ${displayValue}\n`;
       }
