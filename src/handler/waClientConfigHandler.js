@@ -238,12 +238,6 @@ async function handleConfigurationInitiation(sock, remoteJid, phoneNumber, quote
  */
 async function handleClientSelection(sock, remoteJid, phoneNumber, selection, quotedMessage) {
   try {
-    // Security: Verify administrator authorization
-    const isAuthorized = await adminAuthRepo.isPhoneAuthorized(pool, phoneNumber);
-    if (!isAuthorized) {
-      return false; // Silent rejection
-    }
-    
     logger.info('Processing client selection:', {
       phoneNumber,
       selection,
@@ -302,12 +296,6 @@ async function handleClientSelection(sock, remoteJid, phoneNumber, selection, qu
  */
 async function handleYesNoResponse(sock, remoteJid, phoneNumber, response, quotedMessage) {
   try {
-    // Security: Verify administrator authorization
-    const isAuthorized = await adminAuthRepo.isPhoneAuthorized(pool, phoneNumber);
-    if (!isAuthorized) {
-      return false;
-    }
-    
     logger.info('Processing yes/no response:', {
       phoneNumber,
       response: response.toLowerCase(),
@@ -360,12 +348,6 @@ async function handleYesNoResponse(sock, remoteJid, phoneNumber, response, quote
  */
 async function handleConfigurationInput(sock, remoteJid, phoneNumber, input, quotedMessage) {
   try {
-    // Security: Verify administrator authorization
-    const isAuthorized = await adminAuthRepo.isPhoneAuthorized(pool, phoneNumber);
-    if (!isAuthorized) {
-      return false;
-    }
-    
     // Only process if there's an active configuration session
     // This will be implemented in subsequent user stories
     logger.debug('Configuration input received (not yet implemented):', {

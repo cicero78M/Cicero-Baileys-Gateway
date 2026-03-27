@@ -65,11 +65,32 @@ export const ConfigSessionService = {
   async updateSessionStage(sessionId, newStage, additionalUpdates = {}) {
     for (const [phone, session] of sessions.entries()) {
       if (session.session_id === sessionId) {
+        if (newStage && typeof newStage === 'object' && !Array.isArray(newStage)) {
+          const { current_stage: currentStage, ...legacyUpdates } = newStage;
+          Object.assign(session, {
+            current_stage: currentStage ?? session.current_stage,
+            ...legacyUpdates,
+            updated_at: new Date()
+          });
+          return session;
+        }
+
         Object.assign(session, { current_stage: newStage, ...additionalUpdates, updated_at: new Date() });
         return session;
       }
     }
     return null;
+  },
+
+  async deleteSession(sessionId) {
+    for (const [phone, session] of sessions.entries()) {
+      if (session.session_id === sessionId) {
+        sessions.delete(phone);
+        logger.info('ConfigSession deleted:', { phoneNumber: phone, sessionId });
+        return true;
+      }
+    }
+    return false;
   },
 
   async addPendingChange(sessionId, configKey, oldValue, newValue) {
