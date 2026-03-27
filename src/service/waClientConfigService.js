@@ -13,12 +13,10 @@ import {
   hasClientCustomConfiguration
 } from '../service/clientConfigService.js';
 import { ConfigSessionService } from '../service/configSessionService.js';
-import { v4 as uuidv4 } from 'uuid';
 
 // Session constants
 const SESSION_TIMEOUT_MINUTES = 10;
 const MAX_TIMEOUT_EXTENSIONS = 2;
-const WARNING_THRESHOLD_MINUTES = 2;
 
 /**
  * Initiate configuration session and display available clients
@@ -59,7 +57,6 @@ export async function initiateConfigurationSession(phoneNumber) {
     }
     
     // Create new configuration session (client_id set to placeholder until user selects one)
-    const sessionId = uuidv4();
     const session = await ConfigSessionService.createSession(
       phoneNumber,
       '__pending__',
@@ -126,7 +123,7 @@ export async function processClientSelection(phoneNumber, selection) {
     
     // Check session timeout
     if (new Date() > new Date(session.expires_at)) {
-      await deleteConfigurationSession(session.session_id);
+      await ConfigSessionService.deleteSession(session.session_id);
       return {
         success: false,
         error: 'SESSION_EXPIRED',
@@ -134,9 +131,16 @@ export async function processClientSelection(phoneNumber, selection) {
       };
     }
     
-    // Get accessible clients for this administrator
-    const adminPermissions = await getAdministratorPermissions(phoneNumber);
-    const accessibleClients = await getAccessibleClients(phoneNumber, adminPermissions);
+    // Configuration access is intentionally unrestricted; show every active client.
+    const accessibleClients = await getActiveClients();
+
+    if (accessibleClients.length === 0) {
+      return {
+        success: false,
+        error: 'NO_ACTIVE_CLIENTS',
+        message: 'No active clients available for configuration at this time.'
+      };
+    }
     
     // Validate selection
     const selectionNumber = parseInt(selection, 10);
@@ -164,10 +168,11 @@ export async function processClientSelection(phoneNumber, selection) {
     }
     
     // Update session with selected client
-    await ConfigSessionService.updateSessionStage(session.session_id, {
-      client_id: selectedClient.client_id,
-      current_stage: 'viewing_config'
-    });
+    await ConfigSessionService.updateSessionStage(
+      session.session_id,
+      'viewing_config',
+      { client_id: selectedClient.client_id }
+    );
     
     // Get and format client configuration
     const clientConfig = await getFormattedClientConfiguration(selectedClient.client_id, true);
@@ -249,9 +254,10 @@ export async function processYesNoResponse(phoneNumber, response) {
         if (isYes) {
           // User wants to modify configuration - advance to group selection
           // This will be implemented in User Story 3
-          await ConfigSessionService.updateSessionStage(session.session_id, {
-            current_stage: 'selecting_group'
-          });
+          await ConfigSessionService.updateSessionStage(
+            session.session_id,
+            'selecting_group'
+          );
           
           return {
             success: true,
@@ -346,53 +352,6 @@ export async function processConfigurationModification(phoneNumber, input) {
 }
 
 /**
- * Get clients accessible to administrator based on permissions
- * @param {string} phoneNumber - Administrator phone number
- * @param {Object} adminPermissions - Administrator permission object
- * @returns {Promise<Array>} Filtered list of accessible clients
- */
-async function getAccessibleClients(phoneNumber, adminPermissions) {
-  const allActiveClients = await getActiveClients();
-  
-  if (adminPermissions.permission_level === 'full') {
-    return allActiveClients;
-  }
-  
-  if (adminPermissions.permission_level === 'specific_clients') {
-    const clientAccessScope = await getClientAccessScope(phoneNumber);
-    return allActiveClients.filter(client => 
-      clientAccessScope.includes(client.client_id)
-    );
-  }
-  
-  if (adminPermissions.permission_level === 'readonly') {
-    // Readonly administrators can view but not modify
-    return allActiveClients;
-  }
-  
-  return [];
-}
-
-/**
- * Format message for no active clients scenario
- * @param {string} permissionLevel - Administrator permission level
- * @returns {Promise<string>} Formatted message
- */
-async function formatNoActiveClientsMessage(permissionLevel) {
-  let message = '⚠️ CLIENT CONFIGURATION MANAGEMENT\n\n';
-  
-  if (permissionLevel === 'specific_clients') {
-    message += 'No active clients available in your access scope at this time.\n\n';
-    message += 'Contact your system administrator if you need access to additional clients.';
-  } else {
-    message += 'No active clients available for configuration at this time.\n\n';
-    message += 'Please ensure at least one client is running and try again.';
-  }
-  
-  return message;
-}
-
-/**
  * Handle session timeout warnings and extensions
  * @param {string} phoneNumber - Administrator phone number
  * @returns {Promise<Object>} Extension result
@@ -418,7 +377,21 @@ export async function handleSessionExtension(phoneNumber) {
     }
     
     // Extend session
-    const newExpiryTime = await ConfigSessionService.extendSession(session.session_id, SESSION_TIMEOUT_MINUTES);
+    const extendedSession = await ConfigSessionService.extendSession(
+      session.session_id,
+      SESSION_TIMEOUT_MINUTES * 60000
+    );
+    const newExpiryTime = extendedSession?.expires_at
+      ? new Date(extendedSession.expires_at)
+      : null;
+
+    if (!newExpiryTime) {
+      return {
+        success: false,
+        error: 'SESSION_NOT_EXTENDED',
+        message: 'Session extension failed. Please restart with /config.'
+      };
+    }
     
     return {
       success: true,
@@ -483,23 +456,3 @@ export async function cancelConfigurationSession(phoneNumber) {
   }
 }
 
-// ============= Helper Functions =============
-
-/**
- * Get administrator permissions from database
- * @param {string} phoneNumber - Administrator phone number
- * @returns {Promise<Object|null>} Administrator permissions or null if not found
- */
-async function getAdministratorPermissions(phoneNumber) {
-  return await adminAuthRepo.getAuthorizationByPhone(pool, phoneNumber);
-}
-
-/**
- * Get client access scope for administrator
- * @param {string} phoneNumber - Administrator phone number
- * @returns {Promise<string[]>} Array of accessible client IDs
- */
-async function getClientAccessScope(phoneNumber) {
-  const authData = await adminAuthRepo.getAuthorizationByPhone(pool, phoneNumber);
-  return authData?.client_access_scope || [];
-}

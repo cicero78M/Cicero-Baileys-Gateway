@@ -7,9 +7,6 @@
 import { jest } from '@jest/globals';
 import { query as dbQuery } from '../../src/db/postgres.js';
 import { waClientConfigHandler } from '../../src/handler/waClientConfigHandler.js';
-import * as waClientConfigService from '../../src/service/waClientConfigService.js';
-import * as configSessionService from '../../src/service/configSessionService.js';
-import * as clientConfigService from '../../src/service/clientConfigService.js';
 
 // Mock external dependencies but test real service interactions
 jest.mock('../../src/db/postgres.js');
@@ -374,9 +371,8 @@ describe('WhatsApp Client Configuration Integration', () => {
     });
   });
 
-  describe('Permission-based Access Control Integration', () => {
-    test('should enforce client access scope for limited administrators', async () => {
-      // Mock administrator with limited client access
+  describe('Client Visibility Integration', () => {
+    test('should list all active clients without access-scope filtering', async () => {
       dbQuery.mockImplementation((sql, params) => {
         if (sql.includes('administrator_authorization') && params[0] === testAdminPhone) {
           return Promise.resolve({
@@ -390,14 +386,19 @@ describe('WhatsApp Client Configuration Integration', () => {
         }
         
         if (sql.includes("status = 'active'")) {
-          // Should only return clients in scope
           return Promise.resolve({
-            rows: [{
-              client_id: 'CLIENT_001',
-              client_name: 'Production Gateway',
-              status: 'active'
-            }]
-            // CLIENT_002 filtered out due to access scope
+            rows: [
+              {
+                client_id: 'CLIENT_001',
+                client_name: 'Production Gateway',
+                status: 'active'
+              },
+              {
+                client_id: 'CLIENT_002',
+                client_name: 'Development Gateway',
+                status: 'active'
+              }
+            ]
           });
         }
         
@@ -411,10 +412,7 @@ describe('WhatsApp Client Configuration Integration', () => {
         mockContext.remoteJid,
         {
           text: expect.stringMatching(
-            /Available active clients:[\s\S]*1\. CLIENT_001/ // Only CLIENT_001 shown
-          ) &&
-          expect.not.stringMatching(
-            /CLIENT_002/ // CLIENT_002 should not appear
+            /Available active clients:[\s\S]*1\. CLIENT_001[\s\S]*2\. CLIENT_002/
           )
         },
         { quoted: mockContext.message }

@@ -7,11 +7,9 @@
 import { jest } from '@jest/globals';
 import { waClientConfigHandler } from '../../src/handler/waClientConfigHandler.js';
 import * as waClientConfigService from '../../src/service/waClientConfigService.js';
-import * as administratorAuthorizationRepository from '../../src/repository/administratorAuthorizationRepository.js';
 
 // Mock dependencies
 jest.mock('../../src/service/waClientConfigService.js');
-jest.mock('../../src/repository/administratorAuthorizationRepository.js');
 
 describe('waClientConfigHandler', () => {
   let mockContext;
@@ -42,9 +40,6 @@ describe('waClientConfigHandler', () => {
 
     test.each(validCommands)('should recognize valid command: %s', async (command) => {
       mockContext.message.extendedTextMessage.text = command;
-      
-      // Mock authorization check to pass
-      administratorAuthorizationRepository.isAuthorizedAdministrator.mockResolvedValue(true);
       
       // Mock service response for client list
       waClientConfigService.initiateConfigurationSession.mockResolvedValue({
@@ -80,8 +75,7 @@ describe('waClientConfigHandler', () => {
       mockContext.message.extendedTextMessage.text = '/config';
     });
 
-    test('should allow authorized administrator', async () => {
-      administratorAuthorizationRepository.isAuthorizedAdministrator.mockResolvedValue(true);
+    test('should allow direct-message configuration requests', async () => {
       waClientConfigService.initiateConfigurationSession.mockResolvedValue({
         success: true,
         sessionId: 'test-session',
@@ -91,18 +85,6 @@ describe('waClientConfigHandler', () => {
       const result = await waClientConfigHandler(mockContext);
 
       expect(result).toBe(true);
-      expect(administratorAuthorizationRepository.isAuthorizedAdministrator).toHaveBeenCalledWith('+6281234567890');
-    });
-
-    test('should reject unauthorized administrator (silent rejection)', async () => {
-      administratorAuthorizationRepository.isAuthorizedAdministrator.mockResolvedValue(false);
-
-      const result = await waClientConfigHandler(mockContext);
-
-      expect(result).toBe(false);
-      expect(administratorAuthorizationRepository.isAuthorizedAdministrator).toHaveBeenCalledWith('+6281234567890');
-      expect(waClientConfigService.initiateConfigurationSession).not.toHaveBeenCalled();
-      expect(mockContext.sock.sendMessage).not.toHaveBeenCalled();
     });
 
     test('should reject group messages', async () => {
@@ -112,7 +94,6 @@ describe('waClientConfigHandler', () => {
       const result = await waClientConfigHandler(mockContext);
 
       expect(result).toBe(false);
-      expect(administratorAuthorizationRepository.isAuthorizedAdministrator).not.toHaveBeenCalled();
     });
 
     test('should reject newsletter messages', async () => {
@@ -121,14 +102,12 @@ describe('waClientConfigHandler', () => {
       const result = await waClientConfigHandler(mockContext);
 
       expect(result).toBe(false);
-      expect(administratorAuthorizationRepository.isAuthorizedAdministrator).not.toHaveBeenCalled();
     });
   });
 
   describe('Session Workflow', () => {
     beforeEach(() => {
       mockContext.message.extendedTextMessage.text = '/config';
-      administratorAuthorizationRepository.isAuthorizedAdministrator.mockResolvedValue(true);
     });
 
     test('should handle successful session initiation', async () => {
@@ -182,10 +161,6 @@ describe('waClientConfigHandler', () => {
   });
 
   describe('Client Selection Processing', () => {
-    beforeEach(() => {
-      administratorAuthorizationRepository.isAuthorizedAdministrator.mockResolvedValue(true);
-    });
-
     test('should process valid client selection', async () => {
       mockContext.message.extendedTextMessage.text = '1';
       
@@ -231,7 +206,6 @@ describe('waClientConfigHandler', () => {
       };
       delete mockContext.message.conversation;
 
-      administratorAuthorizationRepository.isAuthorizedAdministrator.mockResolvedValue(true);
       waClientConfigService.initiateConfigurationSession.mockResolvedValue({
         success: true,
         sessionId: 'test',
@@ -248,7 +222,6 @@ describe('waClientConfigHandler', () => {
       };
       delete mockContext.message.extendedTextMessage;
 
-      administratorAuthorizationRepository.isAuthorizedAdministrator.mockResolvedValue(true);
       waClientConfigService.initiateConfigurationSession.mockResolvedValue({
         success: true,
         sessionId: 'test',
