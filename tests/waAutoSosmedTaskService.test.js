@@ -11,6 +11,8 @@ const mockFormatDate = jest.fn().mockReturnValue('Senin, 2 Juni 2025');
 const mockResolveClientIdForGroup = jest.fn();
 const mockGetConfigOrDefault = jest.fn();
 const mockFindActiveSession = jest.fn();
+const mockUpsertSession = jest.fn();
+const mockDeleteSession = jest.fn();
 const mockFindActiveOperatorByPhone = jest.fn();
 const mockHandleUnregisteredBroadcast = jest.fn();
 const mockHandleRegistrationDialog = jest.fn();
@@ -54,8 +56,8 @@ jest.unstable_mockModule('../src/service/clientConfigService.js', () => ({
 
 jest.unstable_mockModule('../src/repository/operatorRegistrationSessionRepository.js', () => ({
   findActiveSession: mockFindActiveSession,
-  upsertSession: jest.fn(),
-  deleteSession: jest.fn(),
+  upsertSession: mockUpsertSession,
+  deleteSession: mockDeleteSession,
   isRateLimited: jest.fn(),
   purgeExpiredSessions: jest.fn(),
 }));
@@ -126,6 +128,8 @@ beforeEach(() => {
   mockGetCommentsByVideoId.mockResolvedValue({ comments: [] });
   mockGetUsersByClientFull.mockResolvedValue([]);
   mockFindActiveSession.mockResolvedValue(null);
+  mockUpsertSession.mockResolvedValue(undefined);
+  mockDeleteSession.mockResolvedValue(undefined);
   mockFindActiveOperatorByPhone.mockResolvedValue(null);
   mockResolveClientIdForGroup.mockResolvedValue(null);
 });
@@ -231,6 +235,82 @@ describe('DM path  active registration session', () => {
       chatId // replyJid = chatId (the actual incoming JID)
     );
     expect(mockFindActiveOperatorByPhone).not.toHaveBeenCalled();
+  });
+});
+
+describe('DM path — manual input session', () => {
+  const senderPhone = '628777';
+  const chatId = `${senderPhone}@s.whatsapp.net`;
+  const clientId = 'CL7';
+
+  beforeEach(() => {
+    mockFindActiveOperatorByPhone.mockResolvedValue({ client_id: clientId });
+  });
+
+  test('activates manual input mode via command', async () => {
+    mockFindActiveSession.mockResolvedValue(null);
+
+    const result = await handleAutoSosmedTaskMessageIfApplicable({
+      text: 'input manual ig/tiktok',
+      chatId,
+      senderPhone,
+      messageKey: null,
+      waClient: waClient(),
+    });
+
+    expect(result).toBe(true);
+    expect(mockUpsertSession).toHaveBeenCalledWith(
+      expect.anything(),
+      senderPhone,
+      'manual_input_sosmed',
+      expect.any(String),
+      3600,
+      60
+    );
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueSend.mock.calls[0][1].text).toMatch(/Mode input manual IG\/TikTok aktif/);
+  });
+
+  test('processes urls in manual mode without broadcast validator', async () => {
+    mockFindActiveSession.mockResolvedValue({ stage: 'manual_input_sosmed' });
+    mockIsBroadcastMessage.mockReturnValue(false);
+    mockExtractUrls.mockReturnValue({
+      igUrls: ['https://instagram.com/p/manual123'],
+      tiktokUrls: ['https://www.tiktok.com/@a/video/999'],
+    });
+    mockFetchSinglePostKhusus.mockResolvedValue({ shortcode: 'manual123', like_count: 31 });
+    mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ videoId: '999', commentCount: 7 });
+
+    const result = await handleAutoSosmedTaskMessageIfApplicable({
+      text: 'ini format bebas https://instagram.com/p/manual123 dan https://www.tiktok.com/@a/video/999',
+      chatId,
+      senderPhone,
+      messageKey: null,
+      waClient: waClient(),
+    });
+
+    expect(result).toBe(true);
+    expect(mockIsBroadcastMessage).not.toHaveBeenCalled();
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(3);
+    expect(mockHandleFetchLikesInstagram).toHaveBeenCalled();
+    expect(mockHandleFetchKomentarTiktokBatch).toHaveBeenCalled();
+  });
+
+  test('exits manual mode with batal command', async () => {
+    mockFindActiveSession.mockResolvedValue({ stage: 'manual_input_sosmed' });
+
+    const result = await handleAutoSosmedTaskMessageIfApplicable({
+      text: 'batal',
+      chatId,
+      senderPhone,
+      messageKey: null,
+      waClient: waClient(),
+    });
+
+    expect(result).toBe(true);
+    expect(mockDeleteSession).toHaveBeenCalledWith(expect.anything(), senderPhone);
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueSend.mock.calls[0][1].text).toMatch(/ditutup/);
   });
 });
 
