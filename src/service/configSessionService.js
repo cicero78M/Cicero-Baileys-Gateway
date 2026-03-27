@@ -120,7 +120,11 @@ export const ConfigSessionService = {
   async addPendingChange(sessionId, configKey, oldValue, newValue) {
     const session = await this.getSessionById(sessionId);
     if (!session) return null;
-    session.pending_changes[configKey] = { old: oldValue, new: newValue };
+    session.pending_changes[configKey] = {
+      old_value: oldValue,
+      new_value: newValue,
+      changed_at: new Date().toISOString()
+    };
     session.updated_at = new Date();
     return session;
   },
@@ -224,7 +228,19 @@ export const ConfigSessionService = {
   async getActiveSessions(filters = {}) {
     const result = [];
     for (const session of sessions.values()) {
-      if (!isExpired(session)) result.push(session);
+      if (isExpired(session)) {
+        continue;
+      }
+      if (filters.clientId && session.client_id !== filters.clientId) {
+        continue;
+      }
+      if (filters.currentStage && session.current_stage !== filters.currentStage) {
+        continue;
+      }
+      if (filters.phoneNumber && session.phone_number !== filters.phoneNumber) {
+        continue;
+      }
+      result.push(session);
     }
     return result;
   },
