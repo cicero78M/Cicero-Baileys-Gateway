@@ -5,7 +5,7 @@
  * Extended for WhatsApp Configuration Management Q&A workflow.
  */
 
-import { query } from '../db/postgres.js';
+import { query, getClient } from '../db/postgres.js';
 import {
   getConfigValueWithDefault,
   setConfigValue as repoSetConfigValue,
@@ -76,6 +76,7 @@ function cacheKey(clientId, configKey) {
  */
 const poolProxy = {
   query: (sql, params) => query(sql, params),
+  connect: () => getClient(),
 };
 
 /**

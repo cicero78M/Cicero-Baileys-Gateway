@@ -160,7 +160,11 @@ export async function waClientConfigHandler(context) {
     
     // Check if this is a yes/no response
     if (
-      activeSession.current_stage === SESSION_STAGES.VIEWING_CONFIG &&
+      (
+        activeSession.current_stage === SESSION_STAGES.VIEWING_CONFIG ||
+        activeSession.current_stage === SESSION_STAGES.CONFIRMING_CHANGES ||
+        (activeSession.current_stage === SESSION_STAGES.MODIFYING_CONFIG && activeSession.awaiting_continue_prompt)
+      ) &&
       InputParser.parseYesNo(messageText) !== null
     ) {
       return await handleYesNoResponse(sock, remoteJid, phoneNumber, messageText, message);  
