@@ -18,6 +18,7 @@ const mockHandleFetchLikesInstagram = jest.fn();
 const mockHandleFetchKomentarTiktokBatch = jest.fn();
 const mockGetLikesByShortcode = jest.fn();
 const mockGetCommentsByVideoId = jest.fn();
+const mockGetUsersByClientFull = jest.fn();
 
 jest.unstable_mockModule('../src/handler/fetchpost/instaFetchPost.js', () => ({
   fetchSinglePostKhusus: mockFetchSinglePostKhusus,
@@ -85,6 +86,10 @@ jest.unstable_mockModule('../src/model/tiktokCommentModel.js', () => ({
   getCommentsByVideoId: mockGetCommentsByVideoId,
 }));
 
+jest.unstable_mockModule('../src/model/userModel.js', () => ({
+  getUsersByClientFull: mockGetUsersByClientFull,
+}));
+
 //  Load SUT 
 let handleAutoSosmedTaskMessageIfApplicable;
 let clearOperatorRateLimit;
@@ -119,6 +124,7 @@ beforeEach(() => {
   mockHandleFetchKomentarTiktokBatch.mockResolvedValue(undefined);
   mockGetLikesByShortcode.mockResolvedValue([]);
   mockGetCommentsByVideoId.mockResolvedValue({ comments: [] });
+  mockGetUsersByClientFull.mockResolvedValue([]);
   mockFindActiveSession.mockResolvedValue(null);
   mockFindActiveOperatorByPhone.mockResolvedValue(null);
   mockResolveClientIdForGroup.mockResolvedValue(null);
@@ -261,6 +267,12 @@ describe('DM path  registered operator', () => {
     });
     mockFetchSinglePostKhusus.mockResolvedValue({ like_count: 55 });
     mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ videoId: '123', commentCount: 10 });
+    mockGetCommentsByVideoId.mockResolvedValue({ comments: ['@alpha'] });
+    mockGetUsersByClientFull.mockResolvedValue([
+      { nama: 'Personel A', title: 'Briptu', tiktok: '@alpha', exception: false },
+      { nama: 'Personel B', title: 'Brigpol', tiktok: '@beta', exception: false },
+      { nama: 'Personel C', title: 'Aipda', tiktok: '', exception: false },
+    ]);
     mockGetConfigOrDefault.mockResolvedValue('Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
 
     const result = await handleAutoSosmedTaskMessageIfApplicable({
@@ -283,6 +295,10 @@ describe('DM path  registered operator', () => {
     // Response 1: engagement recap with chakranarayana-style format header
     expect(texts[0]).toMatch(/Mohon ijin Komandan/);
     expect(texts[0]).toMatch(/\*Rekap Tugas Sosmed \(Auto Response\)\*/);
+    expect(texts[0]).toMatch(/\*TikTok \(Workflow Chakranarayana Menu 8\)\*/);
+    expect(texts[0]).toMatch(/\*Melaksanakan:\* 1 pers/);
+    expect(texts[0]).toMatch(/\*Belum melaksanakan:\* 1 pers/);
+    expect(texts[0]).toMatch(/\*Belum Input Username TikTok:\* 1 pers/);
 
     // Response 2: ack contains clientId
     expect(texts[1]).toContain(clientId);
