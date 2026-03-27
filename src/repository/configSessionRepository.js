@@ -2,8 +2,7 @@
 // Configuration Session Repository - WhatsApp Configuration Management
 // CRUD operations for configuration session state management
 
-import { query } from '../db/index.js';
-import { SessionValidation, SESSION_STAGES } from '../model/configSessionModel.js';
+import { SessionValidation } from '../model/configSessionModel.js';
 
 /**
  * Create a new configuration session
