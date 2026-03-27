@@ -120,7 +120,7 @@ beforeEach(() => {
   mockGetConfigOrDefault.mockResolvedValue('Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
   mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
   mockEnqueueSend.mockResolvedValue(undefined);
-  mockFetchSinglePostKhusus.mockResolvedValue({ like_count: 99 });
+  mockFetchSinglePostKhusus.mockResolvedValue({ shortcode: 'abc123', like_count: 99 });
   mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ videoId: 'tt-default', commentCount: 42 });
   mockHandleFetchLikesInstagram.mockResolvedValue(undefined);
   mockHandleFetchKomentarTiktokBatch.mockResolvedValue(undefined);
@@ -423,7 +423,7 @@ describe('DM path  registered operator', () => {
 
     expect(mockQuery).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO insta_post'),
-      [clientId, 'xyz', senderPhone] // phoneNumber normalised = senderPhone when no suffix
+      [clientId, 'abc123', senderPhone] // shortcode berasal dari hasil fetch sukses
     );
   });
 });
