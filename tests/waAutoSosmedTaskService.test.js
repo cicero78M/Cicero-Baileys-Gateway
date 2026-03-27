@@ -280,8 +280,9 @@ describe('DM path  registered operator', () => {
     // All sent to the correct JID
     mockEnqueueSend.mock.calls.forEach(([jid]) => expect(jid).toBe(chatId));
 
-    // Response 1: engagement recap with new format header
-    expect(texts[0]).toMatch(/\*Rekap Tugas Sosmed\*/);
+    // Response 1: engagement recap with chakranarayana-style format header
+    expect(texts[0]).toMatch(/Mohon ijin Komandan/);
+    expect(texts[0]).toMatch(/\*Rekap Tugas Sosmed \(Auto Response\)\*/);
 
     // Response 2: ack contains clientId
     expect(texts[1]).toContain(clientId);

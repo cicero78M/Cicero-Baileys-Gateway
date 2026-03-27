@@ -99,6 +99,12 @@ describe('extractUrls', () => {
     expect(tiktokUrls).toContain('https://vm.tiktok.com/abcdef/');
   });
 
+  test('captures vt.tiktok.com short links', () => {
+    const text = 'share https://vt.tiktok.com/abcdef/ ini';
+    const { tiktokUrls } = extractUrls(text);
+    expect(tiktokUrls).toContain('https://vt.tiktok.com/abcdef/');
+  });
+
   test('ignores non-platform URLs (FR-007)', () => {
     const text = 'kunjungi https://www.google.com dan https://facebook.com/post';
     const { igUrls, tiktokUrls } = extractUrls(text);

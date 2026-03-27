@@ -4,7 +4,7 @@
  * All matching uses broadcastMatcher.js helpers (whole-word, case-insensitive).
  */
 
-import { hasAnyKeyword, hasAllKeywords } from '../utils/broadcastMatcher.js';
+import { hasAnyKeyword } from '../utils/broadcastMatcher.js';
 
 const INDONESIAN_DAYS = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
 const INDONESIAN_MONTHS = [
@@ -13,7 +13,7 @@ const INDONESIAN_MONTHS = [
 ];
 
 const IG_PATTERN = /https?:\/\/(?:[a-z0-9-]+\.)*(?:instagram\.com|ig\.me)\/[^\s)>]*/gi;
-const TIKTOK_PATTERN = /https?:\/\/(?:[a-z0-9-]+\.)*(?:tiktok\.com|vm\.tiktok\.com)\/[^\s)>]*/gi;
+const TIKTOK_PATTERN = /https?:\/\/(?:[a-z0-9-]+\.)*(?:tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)\/[^\s)>]*/gi;
 
 /**
  * Determine whether a raw WA message text is a broadcast tugas sosmed.

@@ -236,11 +236,43 @@ async function buildEngagementRecapText(igResults, tiktokResults, formattedDate)
     return `  ✅ ${url} — ${commentCount} komentar${partisipanLine}`;
   }));
 
-  const parts = [`*Rekap Tugas Sosmed*\n📅 ${formattedDate}`];
-  if (igLines.length) parts.push(`Instagram (${igLines.length} konten):\n${igLines.join('\n')}`);
-  if (tiktokLines.length) parts.push(`TikTok (${tiktokLines.length} konten):\n${tiktokLines.join('\n')}`);
+  const igSuccess = igResults.filter((item) => item.ok).length;
+  const igFailed = igResults.length - igSuccess;
+  const tiktokSuccess = tiktokResults.filter((item) => item.ok).length;
+  const tiktokFailed = tiktokResults.length - tiktokSuccess;
 
-  return parts.join('\n\n');
+  const igUrls = igResults.map(({ url }) => `- ${url}`);
+  const tiktokUrls = tiktokResults.map(({ url }) => `- ${url}`);
+
+  const sections = [
+    'Mohon ijin Komandan,',
+    `📋 *Rekap Tugas Sosmed (Auto Response)*\n${formattedDate}`,
+  ];
+
+  if (igResults.length) {
+    sections.push(
+      `📸 *Instagram*\n` +
+      `*Jumlah Konten:* ${igResults.length}\n` +
+      `✅ *Melaksanakan:* ${igSuccess} konten\n` +
+      `❌ *Belum melaksanakan:* ${igFailed} konten\n` +
+      `*Daftar Link Konten:*\n${igUrls.join('\n')}\n\n` +
+      `*Detail:*\n${igLines.join('\n')}`
+    );
+  }
+
+  if (tiktokResults.length) {
+    sections.push(
+      `🎵 *TikTok*\n` +
+      `*Jumlah Konten:* ${tiktokResults.length}\n` +
+      `✅ *Melaksanakan:* ${tiktokSuccess} konten\n` +
+      `❌ *Belum melaksanakan:* ${tiktokFailed} konten\n` +
+      `*Daftar Link Konten:*\n${tiktokUrls.join('\n')}\n\n` +
+      `*Detail:*\n${tiktokLines.join('\n')}`
+    );
+  }
+
+  sections.push('Terimakasih.');
+  return sections.join('\n\n').trim();
 }
 
 async function loadBroadcastConfig(clientId) {
