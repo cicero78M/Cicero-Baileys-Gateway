@@ -35,13 +35,25 @@ function isOperatorRateLimited(phoneNumber, limitPerHour) {
 }
 
 // Evict stale rate-limit entries to prevent unbounded Map growth (constitution §VII)
-setInterval(() => {
+const _operatorRateLimitEvictionHandle = setInterval(() => {
   const now = Date.now();
   const windowMs = 60 * 60 * 1000;
   for (const [k, v] of _operatorRateLimit) {
     if (now - v.windowStart >= windowMs) _operatorRateLimit.delete(k);
   }
 }, 60 * 60 * 1000);
+
+if (_operatorRateLimitEvictionHandle.unref) {
+  _operatorRateLimitEvictionHandle.unref();
+}
+
+export function clearOperatorRateLimit() {
+  _operatorRateLimit.clear();
+}
+
+export function stopOperatorRateLimitEviction() {
+  clearInterval(_operatorRateLimitEvictionHandle);
+}
 
 // Utility: timeout wrapper
 function withTimeout(promise, ms) {
@@ -131,7 +143,13 @@ async function liveFetchAll(igUrls, tiktokUrls, clientId) {
   }
   if (tiktokUrls.length) {
     try {
-      await handleFetchKomentarTiktokBatch(null, null, clientId);
+      const fetchedVideoIds = tiktokResults
+        .filter(({ ok, data }) => ok && data?.videoId)
+        .map(({ data }) => data.videoId);
+      await handleFetchKomentarTiktokBatch(null, null, clientId, {
+        sourceType: 'manual_input',
+        videoIds: fetchedVideoIds,
+      });
     } catch (err) {
       logger.warn({ err, clientId }, 'liveFetchAll: TikTok engagement sync failed');
     }

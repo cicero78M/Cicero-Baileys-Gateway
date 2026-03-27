@@ -28,6 +28,7 @@ node scripts/run_migration.js sql/migrations/20260325_004_create_operator_regist
 node scripts/run_migration.js sql/migrations/20260325_005_alter_insta_post_task_columns.sql
 node scripts/run_migration.js sql/migrations/20260325_006_alter_tiktok_post_task_columns.sql
 node scripts/run_migration.js sql/migrations/20260325_007_seed_client_config_defaults.sql
+node scripts/run_migration.js sql/migrations/20260326_009_add_operator_rate_limit_config.sql
 ```
 
 Verify:
@@ -99,10 +100,10 @@ Selamat pagi, mohon izin dibantu untuk like dan comment postingan berikut:
 https://www.instagram.com/reel/AbCdEfGhIjK/
 ```
 
-**Expected bot responses** (3 messages in sequence):
-1. Ack message
-2. Status summary with engagement data
-3. Task recap detail
+**Expected bot response**:
+1. Exactly 1 ack message to the group
+
+No engagement recap or task-list detail is sent on the group path.
 
 **Expected DB state**:
 ```sql
@@ -129,6 +130,8 @@ https://www.instagram.com/reel/AbCdEfGhIjK/
 3. Bot sends numbered satker list
 4. Reply with the number of your satker
 5. Bot confirms registration and processes original broadcast
+6. For registered-operator DM flow, the bot sends 3 messages in order:
+   rekap engagement, ack konfirmasi, lalu daftar tugas hari ini
 
 **Verify**:
 ```sql
@@ -168,5 +171,5 @@ Apply migrations inside the container:
 
 ```bash
 docker-compose exec app node scripts/run_migration.js sql/migrations/20260325_001_client_default_sentinel.sql
-# repeat for all 7 migrations...
+# repeat for all 8 migrations...
 ```

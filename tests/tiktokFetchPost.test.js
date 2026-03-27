@@ -349,3 +349,70 @@ describe('fetchAndStoreTiktokContent fallback handling', () => {
     expect(upsertPayload.comment_count).toBe(0);
   });
 });
+
+describe('fetchAndStoreSingleTiktokPost manual RapidAPI detail handling', () => {
+  afterEach(() => {
+    jest.resetModules();
+  });
+
+  test('returns camelCase engagement fields for downstream WA recap', async () => {
+    const mockQuery = jest.fn();
+    const mockUpsert = jest.fn().mockResolvedValue();
+    const mockSendDebug = jest.fn();
+    const mockFetchPostDetail = jest.fn().mockResolvedValue({
+      id: '7234567890123456789',
+      desc: 'caption tiktok',
+      stats: { diggCount: 12, commentCount: 5 },
+    });
+
+    jest.unstable_mockModule('../src/db/index.js', () => ({
+      query: mockQuery,
+    }));
+    jest.unstable_mockModule('../src/model/clientModel.js', () => ({
+      update: jest.fn(),
+    }));
+    jest.unstable_mockModule('../src/model/tiktokPostModel.js', () => ({
+      upsertTiktokPosts: mockUpsert,
+    }));
+    jest.unstable_mockModule('../src/middleware/debugHandler.js', () => ({
+      sendDebug: mockSendDebug,
+    }));
+    jest.unstable_mockModule('../src/service/tiktokApi.js', () => ({
+      fetchTiktokPosts: jest.fn(),
+      fetchTiktokPostsBySecUid: jest.fn(),
+      fetchTiktokInfo: jest.fn(),
+      fetchTiktokPostDetail: mockFetchPostDetail,
+    }));
+
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ client_id: 'CLIENT_TT' }],
+    });
+
+    const { fetchAndStoreSingleTiktokPost } = await import(
+      '../src/handler/fetchpost/tiktokFetchPost.js'
+    );
+
+    const result = await fetchAndStoreSingleTiktokPost(
+      'CLIENT_TT',
+      'https://www.tiktok.com/@client/video/7234567890123456789'
+    );
+
+    expect(mockFetchPostDetail).toHaveBeenCalledWith('7234567890123456789');
+    expect(mockUpsert).toHaveBeenCalledWith('CLIENT_TT', [
+      expect.objectContaining({
+        video_id: '7234567890123456789',
+        like_count: 12,
+        comment_count: 5,
+        source_type: 'manual_input',
+      }),
+    ]);
+    expect(result).toEqual(
+      expect.objectContaining({
+        clientId: 'CLIENT_TT',
+        videoId: '7234567890123456789',
+        likeCount: 12,
+        commentCount: 5,
+      })
+    );
+  });
+});

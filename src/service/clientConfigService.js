@@ -89,6 +89,8 @@ const poolProxy = {
  * @returns {Promise<string|null>}
  */
 export async function getConfig(clientId, configKey) {
+  startCacheEviction();
+
   const key = cacheKey(clientId, configKey);
   const cached = cache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
@@ -116,8 +118,8 @@ export async function getConfigOrDefault(clientId, configKey, fallback) {
 /**
  * Resolve which client_id owns the given WhatsApp group JID.
  * Query order:
- *  1. client_config WHERE config_key='group_jid' AND config_value=$1 → client_id
- *  2. clients table WHERE group_jid=$1 → client_id (legacy fallback)
+ *  1. client_config WHERE config_key='client_group_jid' AND config_value=$1 → client_id
+ *  2. clients table WHERE client_group=$1 AND client_status=TRUE → client_id (legacy fallback)
  *  3. return null if neither found
  *
  * @param {string} groupJid
@@ -126,14 +128,20 @@ export async function getConfigOrDefault(clientId, configKey, fallback) {
 export async function resolveClientIdForGroup(groupJid) {
   // 1. Check client_config table
   const confResult = await query(
-    `SELECT client_id FROM client_config WHERE config_key = 'group_jid' AND config_value = $1 LIMIT 1`,
+    `SELECT client_id
+     FROM client_config
+     WHERE config_key = 'client_group_jid' AND config_value = $1
+     LIMIT 1`,
     [groupJid]
   );
   if (confResult.rows.length > 0) return confResult.rows[0].client_id;
 
   // 2. Legacy fallback: clients table
   const clientsResult = await query(
-    `SELECT client_id FROM clients WHERE client_group = $1 LIMIT 1`,
+    `SELECT client_id
+     FROM clients
+     WHERE client_group = $1 AND client_status = TRUE
+     LIMIT 1`,
     [groupJid]
   );
   if (clientsResult.rows.length > 0) return clientsResult.rows[0].client_id;
