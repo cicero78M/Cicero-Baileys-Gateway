@@ -71,6 +71,11 @@ function isManualInputStage(stage) {
   return String(stage || '').toLowerCase() === MANUAL_INPUT_STAGE;
 }
 
+function extractAllHttpUrls(text) {
+  if (!text || typeof text !== 'string') return [];
+  return Array.from(new Set((text.match(/https?:\/\/[^\s)>]+/gi) || []).map((u) => u.trim())));
+}
+
 async function activateManualInputSession(phoneNumber) {
   const ttlSeconds = 60 * 60;
   const cooldownMinutes = 60;
@@ -165,17 +170,20 @@ async function recordTasksToDB(igUrls, tiktokUrls, clientId, operatorPhone) {
   await Promise.allSettled(opArr);
 }
 
-async function liveFetchAll(igUrls, tiktokUrls, clientId) {
+async function liveFetchAll(igUrls, tiktokUrls, clientId, onProgress = null) {
   const { handleFetchLikesInstagram } = await import('../handler/fetchengagement/fetchLikesInstagram.js');
   const { handleFetchKomentarTiktokBatch } = await import('../handler/fetchengagement/fetchCommentTiktok.js');
 
   const igResults = [];
-  for (const url of igUrls) {
+  for (let index = 0; index < igUrls.length; index += 1) {
+    const url = igUrls[index];
     try {
       const data = await withTimeout(fetchSinglePostKhusus(url, clientId), 8000);
       igResults.push({ url, ok: true, data });
+      if (onProgress) await onProgress({ platform: 'instagram', index: index + 1, total: igUrls.length, url, ok: true });
     } catch {
       igResults.push({ url, ok: false, data: null });
+      if (onProgress) await onProgress({ platform: 'instagram', index: index + 1, total: igUrls.length, url, ok: false });
     }
   }
   const fetchedShortcodes = igResults
@@ -195,12 +203,15 @@ async function liveFetchAll(igUrls, tiktokUrls, clientId) {
   }
 
   const tiktokResults = [];
-  for (const url of tiktokUrls) {
+  for (let index = 0; index < tiktokUrls.length; index += 1) {
+    const url = tiktokUrls[index];
     try {
       const data = await withTimeout(fetchAndStoreSingleTiktokPost(clientId, url), 8000);
       tiktokResults.push({ url, ok: true, data });
+      if (onProgress) await onProgress({ platform: 'tiktok', index: index + 1, total: tiktokUrls.length, url, ok: true });
     } catch {
       tiktokResults.push({ url, ok: false, data: null });
+      if (onProgress) await onProgress({ platform: 'tiktok', index: index + 1, total: tiktokUrls.length, url, ok: false });
     }
   }
   if (tiktokUrls.length) {
@@ -530,7 +541,9 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
       return true;
     }
 
+    const allUrls = extractAllHttpUrls(text);
     let { igUrls, tiktokUrls } = extractUrls(text);
+    const ignoredNonPlatformCount = allUrls.length - (igUrls.length + tiktokUrls.length);
     const totalUrls = igUrls.length + tiktokUrls.length;
     if (totalUrls > 10) {
       const allCapped = [...igUrls, ...tiktokUrls].slice(0, 10);
@@ -552,7 +565,33 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
     }
 
     const formattedDate = formatDate(new Date());
-    const { igResults, tiktokResults } = await liveFetchAll(igUrls, tiktokUrls, clientId);
+    await enqueueSend(dmJid, {
+      text: `Proses input manual multi-link dimulai.\nTarget Instagram: ${igUrls.length}\nTarget TikTok: ${tiktokUrls.length}`,
+    });
+
+    const { igResults, tiktokResults } = await liveFetchAll(igUrls, tiktokUrls, clientId, async ({ platform, index, total, url, ok }) => {
+      const platformLabel = platform === 'instagram' ? 'Instagram' : 'TikTok';
+      const statusLabel = ok ? 'sukses' : 'gagal';
+      await enqueueSend(dmJid, {
+        text: `Progress ${platformLabel} ${index}/${total}: ${statusLabel}\n${url}`,
+      });
+    });
+
+    const igFailedItems = igResults.filter((item) => !item.ok);
+    const tiktokFailedItems = tiktokResults.filter((item) => !item.ok);
+    const totalFailed = igFailedItems.length + tiktokFailedItems.length;
+    const summaryLines = [
+      'Summary proses input manual multi-link:',
+      `✅ Instagram berhasil: ${igResults.length - igFailedItems.length}`,
+      `✅ TikTok berhasil: ${tiktokResults.length - tiktokFailedItems.length}`,
+      `❌ Total gagal: ${totalFailed}`,
+      `⏭️ Link non-IG/TikTok diabaikan: ${Math.max(0, ignoredNonPlatformCount)}`,
+    ];
+    if (totalFailed > 0) {
+      const failedDetails = [...igFailedItems, ...tiktokFailedItems].map((item) => `- ${item.url}`);
+      summaryLines.push('', '*Detail link gagal:*', failedDetails.join('\n'));
+    }
+    await enqueueSend(dmJid, { text: summaryLines.join('\n') });
 
     const recapText = await buildEngagementRecapText(igResults, tiktokResults, formattedDate, clientId);
     await enqueueSend(dmJid, { text: recapText });

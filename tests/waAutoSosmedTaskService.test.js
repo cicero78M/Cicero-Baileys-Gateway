@@ -291,7 +291,11 @@ describe('DM path — manual input session', () => {
 
     expect(result).toBe(true);
     expect(mockIsBroadcastMessage).not.toHaveBeenCalled();
-    expect(mockEnqueueSend).toHaveBeenCalledTimes(3);
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(7);
+    expect(mockEnqueueSend.mock.calls[0][1].text).toMatch(/Proses input manual multi-link dimulai/);
+    expect(mockEnqueueSend.mock.calls[1][1].text).toMatch(/Progress Instagram 1\/1: sukses/);
+    expect(mockEnqueueSend.mock.calls[2][1].text).toMatch(/Progress TikTok 1\/1: sukses/);
+    expect(mockEnqueueSend.mock.calls[3][1].text).toMatch(/Summary proses input manual multi-link/);
     expect(mockHandleFetchLikesInstagram).toHaveBeenCalled();
     expect(mockHandleFetchKomentarTiktokBatch).toHaveBeenCalled();
   });
