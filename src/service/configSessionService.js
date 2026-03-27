@@ -1,382 +1,232 @@
 // src/service/configSessionService.js
 // Configuration Session Service - WhatsApp Configuration Management
-// Session state management and workflow orchestration
+// In-memory session store — no DB migrations required
 
-import { pool } from '../db/index.js';
-import * as configSessionRepo from '../repository/configSessionRepository.js';
-import * as auditLogRepo from '../repository/configurationAuditLogRepository.js';
-import { SessionData, SessionWorkflow, SESSION_STAGES } from '../model/configSessionModel.js';
-import { AuditLogData, AUDIT_ACTION_TYPES } from '../model/configurationAuditLogModel.js';
+import { logger } from '../utils/logger.js';
+
+// In-memory session store: Map<phoneNumber, sessionObject>
+const sessions = new Map();
+
+function generateSessionId() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+function isExpired(session) {
+  return new Date(session.expires_at) < new Date();
+}
 
 /**
- * Configuration Session Management Service
+ * Configuration Session Management Service (in-memory)
  */
 export const ConfigSessionService = {
-  /**
-   * Create new configuration session for administrator
-   * @param {string} phoneNumber - Administrator phone number
-   * @param {string} clientId - Target client ID for configuration
-   * @param {Object} options - Session options
-   * @returns {Promise<Object>} Created session data
-   */
   async createSession(phoneNumber, clientId, {
-    timeoutMs = 10 * 60 * 1000, // 10 minutes default
+    timeoutMs = 10 * 60 * 1000,
     originalState = {}
   } = {}) {
-    // Clean up any existing session for this phone number
-    await configSessionRepo.deleteSessionByPhone(pool, phoneNumber);
-
-    // Create new session
-    const sessionData = SessionData.create(phoneNumber, clientId, timeoutMs);
-    sessionData.original_state = originalState;
-
-    const session = await configSessionRepo.createSession(pool, sessionData);
-
-    // Create audit log entry
-    const auditEntry = AuditLogData.create(
-      session.session_id,
-      clientId,
-      phoneNumber,
-      AUDIT_ACTION_TYPES.START_SESSION
-    );
-    await auditLogRepo.createAuditLog(pool, auditEntry);
-
+    const session = {
+      session_id: generateSessionId(),
+      phone_number: phoneNumber,
+      client_id: clientId || null,
+      current_stage: 'selecting_client',
+      configuration_group: null,
+      pending_changes: {},
+      original_state: originalState,
+      timeout_extensions: 0,
+      expires_at: new Date(Date.now() + timeoutMs),
+      created_at: new Date(),
+      updated_at: new Date()
+    };
+    sessions.set(phoneNumber, session);
+    logger.info('ConfigSession created in memory:', { phoneNumber, sessionId: session.session_id });
     return session;
   },
 
-  /**
-   * Get active session by phone number
-   * @param {string} phoneNumber - Administrator phone number
-   * @returns {Promise<Object|null>} Active session or null if not found
-   */
   async getActiveSession(phoneNumber) {
-    return await configSessionRepo.getActiveSessionByPhone(pool, phoneNumber);
+    const session = sessions.get(phoneNumber);
+    if (!session || isExpired(session)) {
+      if (session) sessions.delete(phoneNumber);
+      return null;
+    }
+    return session;
   },
 
-  /**
-   * Get session by session ID
-   * @param {string} sessionId - Session ID
-   * @returns {Promise<Object|null>} Session data or null if not found
-   */
   async getSessionById(sessionId) {
-    return await configSessionRepo.getSessionById(pool, sessionId);
+    for (const session of sessions.values()) {
+      if (session.session_id === sessionId && !isExpired(session)) {
+        return session;
+      }
+    }
+    return null;
   },
 
-  /**
-   * Update session stage with validation
-   * @param {string} sessionId - Session ID to update
-   * @param {string} newStage - New session stage
-   * @param {Object} additionalUpdates - Additional updates to apply
-   * @returns {Promise<Object|null>} Updated session or null if not found/invalid
-   */
   async updateSessionStage(sessionId, newStage, additionalUpdates = {}) {
-    const session = await configSessionRepo.getSessionById(pool, sessionId);
-    if (!session) {
-      return null;
+    for (const [phone, session] of sessions.entries()) {
+      if (session.session_id === sessionId) {
+        Object.assign(session, { current_stage: newStage, ...additionalUpdates, updated_at: new Date() });
+        return session;
+      }
     }
-
-    // Check if stage transition is valid
-    if (!SessionWorkflow.canTransition(session.current_stage, newStage)) {
-      throw new Error(`Invalid stage transition from ${session.current_stage} to ${newStage}`);
-    }
-
-    const updates = {
-      current_stage: newStage,
-      ...additionalUpdates
-    };
-
-    return await configSessionRepo.updateSession(pool, sessionId, updates);
+    return null;
   },
 
-  /**
-   * Add pending configuration change to session
-   * @param {string} sessionId - Session ID
-   * @param {string} configKey - Configuration key being changed
-   * @param {string} oldValue - Current value
-   * @param {string} newValue - New value
-   * @returns {Promise<Object|null>} Updated session or null if not found
-   */
   async addPendingChange(sessionId, configKey, oldValue, newValue) {
-    const session = await configSessionRepo.getSessionById(pool, sessionId);
-    if (!session) {
-      return null;
-    }
-
-    // Add to session pending changes
-    const updatedSession = await configSessionRepo.addPendingChange(
-      pool, sessionId, configKey, oldValue, newValue
-    );
-
-    // Create audit log entry
-    if (updatedSession) {
-      const auditEntry = AuditLogData.createModificationEntry(
-        sessionId,
-        session.client_id,
-        session.phone_number,
-        configKey,
-        oldValue,
-        newValue
-      );
-      await auditLogRepo.createAuditLog(pool, auditEntry);
-    }
-
-    return updatedSession;
+    const session = await this.getSessionById(sessionId);
+    if (!session) return null;
+    session.pending_changes[configKey] = { old: oldValue, new: newValue };
+    session.updated_at = new Date();
+    return session;
   },
 
-  /**
-   * Remove pending change from session
-   * @param {string} sessionId - Session ID
-   * @param {string} configKey - Configuration key to remove
-   * @returns {Promise<Object|null>} Updated session or null if not found
-   */
   async removePendingChange(sessionId, configKey) {
-    const session = await configSessionRepo.getSessionById(pool, sessionId);
-    if (!session) {
-      return null;
-    }
-
-    const pendingChanges = { ...session.pending_changes };
-    delete pendingChanges[configKey];
-
-    return await configSessionRepo.updateSession(pool, sessionId, {
-      pending_changes: pendingChanges
-    });
+    const session = await this.getSessionById(sessionId);
+    if (!session) return null;
+    delete session.pending_changes[configKey];
+    session.updated_at = new Date();
+    return session;
   },
 
-  /**
-   * Clear all pending changes from session
-   * @param {string} sessionId - Session ID
-   * @returns {Promise<Object|null>} Updated session or null if not found
-   */
   async clearPendingChanges(sessionId) {
-    return await configSessionRepo.clearPendingChanges(pool, sessionId);
+    const session = await this.getSessionById(sessionId);
+    if (!session) return null;
+    session.pending_changes = {};
+    session.updated_at = new Date();
+    return session;
   },
 
-  /**
-   * Get pending changes summary for session
-   * @param {string} sessionId - Session ID
-   * @returns {Promise<Object|null>} Changes summary or null if session not found
-   */
   async getPendingChangesSummary(sessionId) {
-    const session = await configSessionRepo.getSessionById(pool, sessionId);
-    if (!session) {
-      return null;
-    }
-
-    return SessionData.getPendingChangesSummary(session);
+    const session = await this.getSessionById(sessionId);
+    if (!session) return null;
+    return session.pending_changes;
   },
 
-  /**
-   * Extend session timeout
-   * @param {string} sessionId - Session ID to extend
-   * @param {number} extensionMs - Extension time in milliseconds
-   * @returns {Promise<Object|null>} Updated session or null if not found/max extensions reached
-   */
   async extendSession(sessionId, extensionMs = 10 * 60 * 1000) {
-    const session = await configSessionRepo.getSessionById(pool, sessionId);
-    if (!session) {
-      return null;
-    }
-
-    const updatedSession = await configSessionRepo.extendSessionTimeout(pool, sessionId, extensionMs);
-    
-    if (updatedSession) {
-      // Create audit log entry
-      const auditEntry = AuditLogData.create(
-        sessionId,
-        session.client_id,
-        session.phone_number,
-        AUDIT_ACTION_TYPES.EXTEND_SESSION,
-        { extensionCount: updatedSession.timeout_extensions }
-      );
-      await auditLogRepo.createAuditLog(pool, auditEntry);
-    }
-
-    return updatedSession;
+    const session = await this.getSessionById(sessionId);
+    if (!session) return null;
+    session.expires_at = new Date(new Date(session.expires_at).getTime() + extensionMs);
+    session.timeout_extensions += 1;
+    session.updated_at = new Date();
+    return session;
   },
 
-  /**
-   * Check if session is near expiry (for timeout warnings)
-   * @param {string} sessionId - Session ID to check
-   * @param {number} warningMinutes - Minutes before expiry to trigger warning
-   * @returns {Promise<boolean>} True if session is near expiry
-   */
   async isSessionNearExpiry(sessionId, warningMinutes = 2) {
-    return await configSessionRepo.isSessionNearExpiry(pool, sessionId, warningMinutes);
+    const session = await this.getSessionById(sessionId);
+    if (!session) return false;
+    const msRemaining = new Date(session.expires_at) - new Date();
+    return msRemaining < warningMinutes * 60 * 1000;
   },
 
-  /**
-   * Rollback session due to client becoming inactive or other issues
-   * @param {string} sessionId - Session ID to rollback
-   * @param {string} reason - Reason for rollback
-   * @returns {Promise<boolean>} True if rollback successful
-   */
   async rollbackSession(sessionId, reason = 'session_timeout') {
-    const session = await configSessionRepo.getSessionById(pool, sessionId);
-    if (!session) {
-      return false;
+    for (const [phone, session] of sessions.entries()) {
+      if (session.session_id === sessionId) {
+        sessions.delete(phone);
+        logger.info('ConfigSession rolled back:', { sessionId, reason });
+        return true;
+      }
     }
-
-    // Create rollback audit log entry
-    const auditEntry = AuditLogData.createRollbackEntry(
-      sessionId,
-      session.client_id,
-      session.phone_number,
-      reason,
-      session.pending_changes
-    );
-    await auditLogRepo.createAuditLog(pool, auditEntry);
-
-    // Delete the session
-    await configSessionRepo.deleteSession(pool, sessionId);
-
-    return true;
+    return false;
   },
 
-  /**
-   * Complete session successfully (after changes confirmed and applied)
-   * @param {string} sessionId - Session ID to complete
-   * @param {Object} appliedChanges - Changes that were actually applied
-   * @returns {Promise<boolean>} True if completion successful
-   */
   async completeSession(sessionId, appliedChanges = {}) {
-    const session = await configSessionRepo.getSessionById(pool, sessionId);
-    if (!session) {
-      return false;
+    for (const [phone, session] of sessions.entries()) {
+      if (session.session_id === sessionId) {
+        sessions.delete(phone);
+        logger.info('ConfigSession completed:', { sessionId, changeCount: Object.keys(appliedChanges).length });
+        return true;
+      }
     }
-
-    // Create confirmation audit log entry
-    const auditEntry = AuditLogData.createConfirmationEntry(
-      sessionId,
-      session.client_id,
-      session.phone_number,
-      appliedChanges
-    );
-    await auditLogRepo.createAuditLog(pool, auditEntry);
-
-    // Delete the session
-    await configSessionRepo.deleteSession(pool, sessionId);
-
-    return true;
+    return false;
   },
 
-  /**
-   * Get sessions by client ID (for conflict detection)
-   * @param {string} clientId - Client ID to check
-   * @returns {Promise<Array>} Array of active sessions for the client
-   */
   async getSessionsByClient(clientId) {
-    return await configSessionRepo.getSessionsByClient(pool, clientId);
-  },
-
-  /**
-   * Check if client has concurrent configuration sessions
-   * @param {string} clientId - Client ID to check
-   * @param {string} excludePhoneNumber - Phone number to exclude from check
-   * @returns {Promise<boolean>} True if there are other active sessions
-   */
-  async hasConflictingSessions(clientId, excludePhoneNumber = null) {
-    const sessions = await this.getSessionsByClient(clientId);
-    
-    if (excludePhoneNumber) {
-      return sessions.some(session => session.phone_number !== excludePhoneNumber);
+    const result = [];
+    for (const session of sessions.values()) {
+      if (session.client_id === clientId && !isExpired(session)) {
+        result.push(session);
+      }
     }
-    
-    return sessions.length > 0;
+    return result;
   },
 
-  /**
-   * Get queue position for client configuration request
-   * @param {string} clientId - Client ID
-   * @param {string} phoneNumber - Requesting phone number
-   * @returns {Promise<number>} Queue position (0 if no queue)
-   */
+  async hasConflictingSessions(clientId, excludePhoneNumber = null) {
+    const clientSessions = await this.getSessionsByClient(clientId);
+    if (excludePhoneNumber) {
+      return clientSessions.some(s => s.phone_number !== excludePhoneNumber);
+    }
+    return clientSessions.length > 0;
+  },
+
   async getQueuePosition(clientId, phoneNumber) {
-    const sessions = await this.getSessionsByClient(clientId);
-    const sortedSessions = sessions.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    
-    const position = sortedSessions.findIndex(session => session.phone_number === phoneNumber);
-    return position >= 0 ? position : sortedSessions.length;
+    const clientSessions = await this.getSessionsByClient(clientId);
+    const sorted = clientSessions.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const position = sorted.findIndex(s => s.phone_number === phoneNumber);
+    return position >= 0 ? position : sorted.length;
   },
 
-  /**
-   * Clean up expired sessions
-   * @returns {Promise<number>} Number of sessions cleaned up
-   */
   async cleanupExpiredSessions() {
-    return await configSessionRepo.cleanupExpiredSessions(pool);
+    let count = 0;
+    for (const [phone, session] of sessions.entries()) {
+      if (isExpired(session)) {
+        sessions.delete(phone);
+        count++;
+      }
+    }
+    return count;
   },
 
-  /**
-   * Get session statistics for monitoring
-   * @param {string} sessionId - Session ID
-   * @returns {Promise<Object|null>} Session statistics or null if not found
-   */
+  async getActiveSessions(filters = {}) {
+    const result = [];
+    for (const session of sessions.values()) {
+      if (!isExpired(session)) result.push(session);
+    }
+    return result;
+  },
+
+  async setConfigurationGroup(sessionId, configGroup) {
+    const session = await this.getSessionById(sessionId);
+    if (!session) return null;
+    session.configuration_group = configGroup;
+    session.updated_at = new Date();
+    return session;
+  },
+
+  async setOriginalState(sessionId, originalState) {
+    const session = await this.getSessionById(sessionId);
+    if (!session) return null;
+    session.original_state = originalState;
+    session.updated_at = new Date();
+    return session;
+  },
+
   async getSessionStatistics(sessionId) {
-    return await auditLogRepo.getSessionStatistics(pool, sessionId);
+    const session = await this.getSessionById(sessionId);
+    if (!session) return null;
+    return {
+      session_id: sessionId,
+      duration_ms: new Date() - new Date(session.created_at),
+      pending_changes_count: Object.keys(session.pending_changes).length,
+      timeout_extensions: session.timeout_extensions
+    };
   },
 
-  /**
-   * Monitor client status during session lifecycle
-   * @param {string} sessionId - Session ID to monitor
-   * @param {Function} clientStatusChecker - Function to check if client is active
-   * @returns {Promise<boolean>} True if client is still active
-   */
   async monitorClientStatus(sessionId, clientStatusChecker) {
     const session = await this.getSessionById(sessionId);
-    if (!session) {
-      return false;
-    }
-
+    if (!session) return false;
     try {
       const isActive = await clientStatusChecker(session.client_id);
-      
       if (!isActive) {
-        // Client became inactive - rollback session
         await this.rollbackSession(sessionId, 'client_inactive');
         return false;
       }
-      
       return true;
-    } catch (error) {
-      // Error checking client status - assume inactive and rollback
+    } catch {
       await this.rollbackSession(sessionId, 'client_status_check_failed');
       return false;
     }
-  },
-
-  /**
-   * Get all active sessions (for monitoring/debugging)
-   * @param {Object} filters - Optional filters
-   * @returns {Promise<Array>} Array of active sessions
-   */
-  async getActiveSessions(filters = {}) {
-    return await configSessionRepo.getActiveSessions(pool, filters);
-  },
-
-  /**
-   * Set session configuration group (for tracking current modification group)
-   * @param {string} sessionId - Session ID
-   * @param {string} configGroup - Configuration group being modified
-   * @returns {Promise<Object|null>} Updated session or null if not found
-   */
-  async setConfigurationGroup(sessionId, configGroup) {
-    return await configSessionRepo.updateSession(pool, sessionId, {
-      configuration_group: configGroup
-    });
-  },
-
-  /**
-   * Store original configuration state for rollback capability
-   * @param {string} sessionId - Session ID
-   * @param {Object} originalState - Original configuration state
-   * @returns {Promise<Object|null>} Updated session or null if not found
-   */
-  async setOriginalState(sessionId, originalState) {
-    return await configSessionRepo.updateSession(pool, sessionId, {
-      original_state: originalState
-    });
   }
 };
 
 export default ConfigSessionService;
+
