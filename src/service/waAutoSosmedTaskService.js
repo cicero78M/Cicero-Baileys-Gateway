@@ -212,10 +212,7 @@ async function recordSuccessfulTasksToDB({ igResults, tiktokResults, clientId, o
   await Promise.allSettled(opArr);
 }
 
-async function liveFetchAll(igUrls, tiktokUrls, clientId, onProgress = null) {
-  const { handleFetchLikesInstagram } = await import('../handler/fetchengagement/fetchLikesInstagram.js');
-  const { handleFetchKomentarTiktokBatch } = await import('../handler/fetchengagement/fetchCommentTiktok.js');
-
+async function fetchInstagramPosts(igUrls, clientId, onProgress = null) {
   const igResults = [];
   for (let index = 0; index < igUrls.length; index += 1) {
     const url = igUrls[index];
@@ -228,22 +225,10 @@ async function liveFetchAll(igUrls, tiktokUrls, clientId, onProgress = null) {
       if (onProgress) await onProgress({ platform: 'instagram', index: index + 1, total: igUrls.length, url, ok: false });
     }
   }
-  const fetchedShortcodes = igResults
-    .filter(({ ok, data }) => ok && data?.shortcode)
-    .map(({ data }) => String(data.shortcode).trim())
-    .filter(Boolean);
-  if (fetchedShortcodes.length) {
-    try {
-      await handleFetchLikesInstagram(null, null, clientId, {
-        shortcodes: fetchedShortcodes,
-        sourceType: 'manual_input',
-        enrichComments: false,
-      });
-    } catch (err) {
-      logger.warn({ err, clientId }, 'liveFetchAll: IG engagement sync failed');
-    }
-  }
+  return igResults;
+}
 
+async function fetchTiktokPosts(tiktokUrls, clientId, onProgress = null) {
   const tiktokResults = [];
   for (let index = 0; index < tiktokUrls.length; index += 1) {
     const url = tiktokUrls[index];
@@ -256,21 +241,43 @@ async function liveFetchAll(igUrls, tiktokUrls, clientId, onProgress = null) {
       if (onProgress) await onProgress({ platform: 'tiktok', index: index + 1, total: tiktokUrls.length, url, ok: false });
     }
   }
-  if (tiktokUrls.length) {
+  return tiktokResults;
+}
+
+async function fetchEngagementFromFetchedPosts(igResults, tiktokResults, clientId) {
+  const { handleFetchLikesInstagram } = await import('../handler/fetchengagement/fetchLikesInstagram.js');
+  const { handleFetchKomentarTiktokBatch } = await import('../handler/fetchengagement/fetchCommentTiktok.js');
+
+  const fetchedShortcodes = igResults
+    .filter(({ ok, data }) => ok && data?.shortcode)
+    .map(({ data }) => String(data.shortcode).trim())
+    .filter(Boolean);
+
+  if (fetchedShortcodes.length) {
     try {
-      const fetchedVideoIds = tiktokResults
-        .filter(({ ok, data }) => ok && data?.videoId)
-        .map(({ data }) => data.videoId);
+      await handleFetchLikesInstagram(null, null, clientId, {
+        shortcodes: fetchedShortcodes,
+        sourceType: 'manual_input',
+        enrichComments: false,
+      });
+    } catch (err) {
+      logger.warn({ err, clientId }, 'waAutoSosmedTask: IG engagement sync failed');
+    }
+  }
+
+  const fetchedVideoIds = tiktokResults
+    .filter(({ ok, data }) => ok && data?.videoId)
+    .map(({ data }) => data.videoId);
+  if (fetchedVideoIds.length) {
+    try {
       await handleFetchKomentarTiktokBatch(null, null, clientId, {
         sourceType: 'manual_input',
         videoIds: fetchedVideoIds,
       });
     } catch (err) {
-      logger.warn({ err, clientId }, 'liveFetchAll: TikTok engagement sync failed');
+      logger.warn({ err, clientId }, 'waAutoSosmedTask: TikTok engagement sync failed');
     }
   }
-
-  return { igResults, tiktokResults };
 }
 
 async function getTodayOperatorTaskList(clientId, operatorPhone) {
@@ -602,16 +609,31 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
 
     const formattedDate = formatDate(new Date());
     await enqueueSend(dmJid, {
-      text: `Proses input manual multi-link dimulai.\nTarget Instagram: ${igUrls.length}\nTarget TikTok: ${tiktokUrls.length}`,
+      text:
+        `Proses input manual multi-link dimulai.\n` +
+        `1) Fetch post Instagram & TikTok\n` +
+        `2) Fetch likes Instagram & komentar TikTok\n` +
+        `3) Informasi input manual\n` +
+        `4) List tugas hari ini\n\n` +
+        `Target Instagram: ${igUrls.length}\n` +
+        `Target TikTok: ${tiktokUrls.length}`,
     });
 
-    const { igResults, tiktokResults } = await liveFetchAll(igUrls, tiktokUrls, clientId, async ({ platform, index, total, url, ok }) => {
+    const igResults = await fetchInstagramPosts(igUrls, clientId, async ({ platform, index, total, url, ok }) => {
       const platformLabel = platform === 'instagram' ? 'Instagram' : 'TikTok';
       const statusLabel = ok ? 'sukses' : 'gagal';
       await enqueueSend(dmJid, {
         text: `Progress ${platformLabel} ${index}/${total}: ${statusLabel}\n${url}`,
       });
     });
+    const tiktokResults = await fetchTiktokPosts(tiktokUrls, clientId, async ({ platform, index, total, url, ok }) => {
+      const platformLabel = platform === 'instagram' ? 'Instagram' : 'TikTok';
+      const statusLabel = ok ? 'sukses' : 'gagal';
+      await enqueueSend(dmJid, {
+        text: `Progress ${platformLabel} ${index}/${total}: ${statusLabel}\n${url}`,
+      });
+    });
+    await fetchEngagementFromFetchedPosts(igResults, tiktokResults, clientId);
     try {
       await recordSuccessfulTasksToDB({ igResults, tiktokResults, clientId, operatorPhone: phoneNumber });
     } catch (err) {
@@ -697,7 +719,9 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
     logger.info({ phoneNumber, clientId, igUrls, tiktokUrls }, 'waAutoSosmedTask: DM registered operator');
 
     const formattedDate = formatDate(new Date());
-    const { igResults, tiktokResults } = await liveFetchAll(igUrls, tiktokUrls, clientId);
+    const igResults = await fetchInstagramPosts(igUrls, clientId);
+    const tiktokResults = await fetchTiktokPosts(tiktokUrls, clientId);
+    await fetchEngagementFromFetchedPosts(igResults, tiktokResults, clientId);
     try {
       await recordSuccessfulTasksToDB({ igResults, tiktokResults, clientId, operatorPhone: phoneNumber });
     } catch (err) {
