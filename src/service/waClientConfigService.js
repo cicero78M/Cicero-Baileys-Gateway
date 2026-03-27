@@ -13,10 +13,63 @@ import {
   hasClientCustomConfiguration
 } from '../service/clientConfigService.js';
 import { ConfigSessionService } from '../service/configSessionService.js';
+import { query } from '../db/index.js';
 
 // Session constants
 const SESSION_TIMEOUT_MINUTES = 10;
 const MAX_TIMEOUT_EXTENSIONS = 2;
+
+async function getUnrestrictedActiveClients(phoneNumber) {
+  let clients = [];
+
+  try {
+    clients = await getActiveClients();
+  } catch (clientListErr) {
+    logger.warn('Primary getActiveClients failed. Trying fallback query:', {
+      phoneNumber,
+      error: clientListErr.message
+    });
+  }
+
+  if (Array.isArray(clients) && clients.length > 0) {
+    return clients;
+  }
+
+  try {
+    const withActiveFilter = await query(
+      `SELECT client_id, client_name
+       FROM clients
+       WHERE is_active = true
+       ORDER BY client_name ASC`
+    );
+    clients = withActiveFilter.rows || [];
+  } catch (fallbackErr) {
+    logger.warn('Fallback query with is_active failed. Trying unrestricted query:', {
+      phoneNumber,
+      error: fallbackErr.message
+    });
+  }
+
+  if (Array.isArray(clients) && clients.length > 0) {
+    return clients;
+  }
+
+  try {
+    const unrestricted = await query(
+      `SELECT client_id, client_name
+       FROM clients
+       ORDER BY client_name ASC`
+    );
+    clients = unrestricted.rows || [];
+  } catch (unrestrictedErr) {
+    logger.error('Unrestricted clients query failed:', {
+      phoneNumber,
+      error: unrestrictedErr.message
+    });
+  }
+
+  return Array.isArray(clients) ? clients : [];
+}
 
 /**
  * Initiate configuration session and display available clients
@@ -32,21 +85,17 @@ export async function initiateConfigurationSession(phoneNumber) {
       logger.warn('Session cleanup skipped (tables may not exist yet):', { error: cleanupErr.message });
     }
     
-    // Check if user already has an active session
+    // Keep /config unrestricted: reset previous active session and start fresh.
     const existingSession = await ConfigSessionService.getActiveSession(phoneNumber);
     if (existingSession) {
-      const timeRemaining = Math.ceil((new Date(existingSession.expires_at) - new Date()) / 60000);
-      
-      return {
-        success: false,
-        error: 'ACTIVE_SESSION_EXISTS',
-        sessionId: existingSession.session_id,
-        message: `🔧 CONFIGURATION SESSION ACTIVE\n\nYou have an existing configuration session that expires in ${timeRemaining} minute(s).\n\nType 'cancel' to end the current session and start a new one.`
-      }; 
+      await ConfigSessionService.deleteSession(existingSession.session_id);
+      logger.info('Reset existing config session for unrestricted /config access:', {
+        phoneNumber,
+        previousSessionId: existingSession.session_id
+      });
     }
     
-    // Get all active clients
-    const accessibleClients = await getActiveClients();
+    const accessibleClients = await getUnrestrictedActiveClients(phoneNumber);
     
     if (accessibleClients.length === 0) {
       return {
@@ -63,8 +112,25 @@ export async function initiateConfigurationSession(phoneNumber) {
       { timeoutMs: SESSION_TIMEOUT_MINUTES * 60000 }
     );
     
-    // Format client list message
-    const clientListMessage = await formatClientListDisplay(accessibleClients);
+    // Format message with safe fallback so initiation does not fail on formatter issues.
+    let clientListMessage;
+    try {
+      clientListMessage = await formatClientListDisplay(accessibleClients);
+    } catch (formatErr) {
+      logger.warn('formatClientListDisplay failed. Using plain fallback message:', {
+        phoneNumber,
+        error: formatErr.message
+      });
+
+      const lines = accessibleClients.map((client, idx) => `${idx + 1}. ${client.client_name || client.client_id}`);
+      clientListMessage = [
+        'CONFIGURATION MANAGEMENT',
+        '',
+        'Select a client by replying with the number:',
+        '',
+        ...lines
+      ].join('\n');
+    }
     
     logger.info('Configuration session created:', {
       phoneNumber,
@@ -132,7 +198,7 @@ export async function processClientSelection(phoneNumber, selection) {
     }
     
     // Configuration access is intentionally unrestricted; show every active client.
-    const accessibleClients = await getActiveClients();
+    const accessibleClients = await getUnrestrictedActiveClients(phoneNumber);
 
     if (accessibleClients.length === 0) {
       return {
@@ -155,7 +221,7 @@ export async function processClientSelection(phoneNumber, selection) {
     const selectedClient = accessibleClients[selectionNumber - 1];
     
     // Verify client is still active (could have become inactive during session)
-    const currentActiveClients = await getActiveClients();
+    const currentActiveClients = await getUnrestrictedActiveClients(phoneNumber);
     const isStillActive = currentActiveClients.some(client => client.client_id === selectedClient.client_id);
     
     if (!isStillActive) {
