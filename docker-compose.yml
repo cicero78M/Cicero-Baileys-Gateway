@@ -82,6 +82,8 @@ services:
       # Feature flags
       ENABLE_DIRREQUEST_GROUP: ${ENABLE_DIRREQUEST_GROUP:-true}
       ALLOW_DUPLICATE_REQUESTS: ${ALLOW_DUPLICATE_REQUESTS:-false}
+      # WhatsApp Config Management authorized JIDs (comma-separated, supports @lid format)
+      ADMIN_CONFIG_JIDS: ${ADMIN_CONFIG_JIDS:-}
     volumes:
       # Persist WhatsApp session credentials
       - wa_session:/app/auth_info_baileys
