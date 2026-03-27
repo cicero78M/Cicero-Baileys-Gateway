@@ -5,7 +5,11 @@ import { enqueueSend } from './waOutbox.js';
 import { logger } from '../utils/logger.js';
 import { isBroadcastMessage, extractUrls, formatDate } from './sosmedBroadcastParser.js';
 import { resolveClientIdForGroup, getConfigOrDefault } from './clientConfigService.js';
-import { findActiveSession } from '../repository/operatorRegistrationSessionRepository.js';
+import {
+  findActiveSession,
+  upsertSession,
+  deleteSession,
+} from '../repository/operatorRegistrationSessionRepository.js';
 import { findActiveOperatorByPhone } from '../repository/operatorRepository.js';
 import {
   handleUnregisteredBroadcast,
@@ -17,6 +21,16 @@ import { getUsersByClientFull } from '../model/userModel.js';
 
 // Pool proxy for repositories
 const _pool = { query: (sql, params) => query(sql, params) };
+
+const MANUAL_INPUT_STAGE = 'manual_input_sosmed';
+const REGISTRATION_STAGES = new Set(['awaiting_confirmation', 'awaiting_satker_choice']);
+const MANUAL_INPUT_START_COMMANDS = new Set([
+  'input manual ig/tiktok',
+  'input manual ig tiktok',
+  'manual ig/tiktok',
+  'manual ig tiktok',
+]);
+const MANUAL_INPUT_EXIT_COMMANDS = new Set(['batal', 'menu']);
 
 // FR-021: In-memory operator broadcast rate limit counter
 // Map<phoneNumber, { count, windowStart }> — bounded by O(active operators)
@@ -33,6 +47,45 @@ function isOperatorRateLimited(phoneNumber, limitPerHour) {
   if (entry.count >= limitPerHour) return true;
   entry.count += 1;
   return false;
+}
+
+function normalizeCommandToken(text) {
+  return String(text || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function isManualInputStartCommand(text) {
+  const token = normalizeCommandToken(text);
+  return MANUAL_INPUT_START_COMMANDS.has(token);
+}
+
+function isManualInputExitCommand(text) {
+  const token = normalizeCommandToken(text);
+  return MANUAL_INPUT_EXIT_COMMANDS.has(token);
+}
+
+function isRegistrationStage(stage) {
+  return REGISTRATION_STAGES.has(String(stage || '').toLowerCase());
+}
+
+function isManualInputStage(stage) {
+  return String(stage || '').toLowerCase() === MANUAL_INPUT_STAGE;
+}
+
+async function activateManualInputSession(phoneNumber) {
+  const ttlSeconds = 60 * 60;
+  const cooldownMinutes = 60;
+  await upsertSession(
+    _pool,
+    phoneNumber,
+    MANUAL_INPUT_STAGE,
+    JSON.stringify({ mode: MANUAL_INPUT_STAGE, activatedAt: new Date().toISOString() }),
+    ttlSeconds,
+    cooldownMinutes
+  );
+}
+
+async function deactivateManualInputSession(phoneNumber) {
+  await deleteSession(_pool, phoneNumber);
 }
 
 // Evict stale rate-limit entries to prevent unbounded Map growth (constitution §VII)
@@ -439,9 +492,9 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
   // (wrong for @lid senders which would produce "xxx@lid@s.whatsapp.net").
   const dmJid = chatId;
 
-  // Active registration session check
+  // Active session check
   const session = await findActiveSession(_pool, phoneNumber);
-  if (session) {
+  if (session && isRegistrationStage(session.stage)) {
     await handleRegistrationDialog(phoneNumber, text, enqueueSend, async (originalMessage) => {
       await handleAutoSosmedTaskMessageIfApplicable({
         text: originalMessage,
@@ -454,10 +507,81 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
     return true;
   }
 
+  if (session && isManualInputStage(session.stage)) {
+    const operatorInSession = await findActiveOperatorByPhone(_pool, phoneNumber);
+    if (!operatorInSession) {
+      await deactivateManualInputSession(phoneNumber);
+      return false;
+    }
+
+    if (isManualInputExitCommand(text)) {
+      await deactivateManualInputSession(phoneNumber);
+      await enqueueSend(dmJid, {
+        text: 'Mode input manual IG/TikTok ditutup. Silakan gunakan menu utama.',
+      });
+      return true;
+    }
+
+    const clientId = operatorInSession.client_id;
+    const rateLimitStr = await getConfigOrDefault(clientId, 'operator_broadcast_rate_limit', '20');
+    const rateLimit = parseInt(rateLimitStr, 10);
+    if (isOperatorRateLimited(phoneNumber, rateLimit)) {
+      logger.warn({ phoneNumber, clientId }, 'waAutoSosmedTask: manual input rate limit exceeded, suppressing');
+      return true;
+    }
+
+    let { igUrls, tiktokUrls } = extractUrls(text);
+    const totalUrls = igUrls.length + tiktokUrls.length;
+    if (totalUrls > 10) {
+      const allCapped = [...igUrls, ...tiktokUrls].slice(0, 10);
+      igUrls = allCapped.filter((u) => /instagram\.com|ig\.me/i.test(u));
+      tiktokUrls = allCapped.filter((u) => /tiktok\.com/i.test(u));
+    }
+
+    if (igUrls.length + tiktokUrls.length === 0) {
+      await enqueueSend(dmJid, {
+        text: 'Mode input manual aktif. Kirim link Instagram/TikTok atau ketik *batal/menu* untuk keluar.',
+      });
+      return true;
+    }
+
+    try {
+      await recordTasksToDB(igUrls, tiktokUrls, clientId, phoneNumber);
+    } catch (err) {
+      logger.error({ err, phoneNumber, clientId }, 'waAutoSosmedTask: manual mode DB insert failed');
+    }
+
+    const formattedDate = formatDate(new Date());
+    const { igResults, tiktokResults } = await liveFetchAll(igUrls, tiktokUrls, clientId);
+
+    const recapText = await buildEngagementRecapText(igResults, tiktokResults, formattedDate, clientId);
+    await enqueueSend(dmJid, { text: recapText });
+
+    const ackTemplate = await getConfigOrDefault(clientId, 'task_input_ack', 'Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
+    await enqueueSend(dmJid, { text: ackTemplate.replace('{client_id}', clientId) });
+
+    try {
+      const { igShortcodes, tiktokVideoIds } = await getTodayOperatorTaskList(clientId, phoneNumber);
+      await enqueueSend(dmJid, { text: buildTaskListText(igShortcodes, tiktokVideoIds, formattedDate) });
+    } catch (err) {
+      logger.error({ err, phoneNumber, clientId }, 'waAutoSosmedTask: manual mode failed to fetch today task list');
+    }
+    return true;
+  }
+
   // Registered operator path
   const operator = await findActiveOperatorByPhone(_pool, phoneNumber);
   if (operator) {
     const clientId = operator.client_id;
+
+    if (isManualInputStartCommand(text)) {
+      await activateManualInputSession(phoneNumber);
+      await enqueueSend(dmJid, {
+        text: 'Mode input manual IG/TikTok aktif. Kirim satu atau banyak link Instagram/TikTok. Ketik *batal* atau *menu* untuk keluar.',
+      });
+      return true;
+    }
+
     const config = await loadBroadcastConfig(clientId);
     if (!isBroadcastMessage(text, config)) {
       return false;
