@@ -5,22 +5,12 @@
  */
 
 import { logger } from '../utils/logger.js';
-import * as adminAuthRepo from '../repository/administratorAuthorizationRepository.js';
-import { pool } from '../db/index.js';
 import {
   initiateConfigurationSession,
   processClientSelection,
   processConfigurationModification,
   processYesNoResponse
 } from '../service/waClientConfigService.js';
-
-// Env-var based authorization: ADMIN_CONFIG_JIDS=144852301946929@lid,628xxx
-// Supports both raw JID (including @lid) and plain phone digits.
-function isEnvAuthorized(remoteJid, phoneNumber) {
-  const raw = (process.env.ADMIN_CONFIG_JIDS || '').split(',').map(s => s.trim()).filter(Boolean);
-  if (raw.length === 0) return false;
-  return raw.includes(remoteJid) || raw.includes(phoneNumber);
-}
 
 // Command patterns for configuration management
 const CONFIG_COMMAND_PATTERNS = [
@@ -193,18 +183,6 @@ export async function waClientConfigHandler(context) {
  */
 async function handleConfigurationInitiation(sock, remoteJid, phoneNumber, quotedMessage) {
   try {
-    // Security: Verify administrator authorization via env var OR DB table
-    const authorized = isEnvAuthorized(remoteJid, phoneNumber)
-      || await adminAuthRepo.isPhoneAuthorized(pool, phoneNumber);
-    if (!authorized) {
-      // Silent rejection for unauthorized users (security best practice)
-      logger.warn('Unauthorized configuration access attempt:', {
-        phoneNumber,
-        remoteJid
-      });
-      return false;
-    }
-    
     logger.info('Processing configuration initiation:', {
       phoneNumber,
       remoteJid
