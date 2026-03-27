@@ -53,3 +53,22 @@ test('handler retries fetching comments before failing', async () => {
   expect(mockFetchAll).toHaveBeenCalledTimes(2);
   expect(mockSendDebug).toHaveBeenCalledWith(expect.objectContaining({ tag: 'TTK COMMENT RETRY' }));
 });
+
+test('uses explicit videoIds from options instead of querying today rows', async () => {
+  mockQuery
+    .mockResolvedValueOnce({ rows: [{ tiktok: '@exc1' }] })
+    .mockResolvedValueOnce({ rows: [] })
+    .mockResolvedValueOnce({ rows: [] });
+  mockFetchAll.mockResolvedValueOnce([]);
+
+  await handleFetchKomentarTiktokBatch(null, null, 'POLRES3', {
+    videoIds: ['vid-explicit-1'],
+    sourceType: 'manual_input',
+  });
+
+  expect(mockQuery).not.toHaveBeenCalledWith(
+    expect.stringContaining('FROM tiktok_post'),
+    expect.anything()
+  );
+  expect(mockFetchAll).toHaveBeenCalledWith('vid-explicit-1');
+});

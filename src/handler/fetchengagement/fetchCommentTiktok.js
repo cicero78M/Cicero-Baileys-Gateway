@@ -10,6 +10,12 @@ const MAX_COMMENT_FETCH_ATTEMPTS = 3;
 const COMMENT_FETCH_RETRY_DELAY_MS = 2000;
 const SNAPSHOT_INTERVAL_MS = 30 * 60 * 1000;
 
+function getJakartaDateString(date = new Date()) {
+  return date.toLocaleDateString("en-CA", {
+    timeZone: "Asia/Jakarta",
+  });
+}
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -115,15 +121,29 @@ async function upsertTiktokUserComments(video_id, usernamesArr) {
  */
 export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = null, client_id = null, options = {}) {
   try {
-    const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth() + 1).padStart(2, "0");
-    const dd = String(today.getDate()).padStart(2, "0");
-    const normalizedId = normalizeClientId(client_id);
-    const { rows } = await query(
-      `SELECT video_id FROM tiktok_post WHERE LOWER(TRIM(client_id)) = $1 AND DATE(created_at) = $2`,
-      [normalizedId, `${yyyy}-${mm}-${dd}`]
-    );
+    const normalizedVideoIds = Array.isArray(options.videoIds)
+      ? [...new Set(options.videoIds.map((item) => String(item || "").trim()).filter(Boolean))]
+      : [];
+
+    let rows = [];
+    if (normalizedVideoIds.length) {
+      rows = normalizedVideoIds.map((video_id) => ({ video_id }));
+    } else {
+      const todayJakarta = getJakartaDateString();
+      const normalizedId = normalizeClientId(client_id);
+      const sourceType = (options.sourceType || "").toString().trim().toLowerCase();
+      const filterManualOnly = sourceType === "manual_input";
+      const result = await query(
+        `SELECT video_id
+         FROM tiktok_post
+         WHERE LOWER(TRIM(client_id)) = $1
+           AND DATE((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Jakarta') = $2
+           AND ($3::boolean = false OR COALESCE(LOWER(TRIM(source_type)), 'cron_fetch') = 'manual_input')`,
+        [normalizedId, todayJakarta, filterManualOnly]
+      );
+      rows = result.rows;
+    }
+
     const videoIds = rows.map((r) => r.video_id);
     const excRes = await query(
       `SELECT tiktok FROM "user" WHERE exception = true AND tiktok IS NOT NULL`
@@ -141,7 +161,10 @@ export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = n
     }
 
     if (!videoIds.length) {
-      if (waClient && chatId) await waClient.sendMessage(chatId, `Tidak ada konten TikTok hari ini untuk client ${client_id}.`);
+      if (waClient && chatId) {
+        const emptyLabel = options.sourceType === "manual_input" ? "manual hari ini" : "hari ini";
+        await waClient.sendMessage(chatId, `Tidak ada konten TikTok ${emptyLabel} untuk client ${client_id}.`);
+      }
       sendDebug({
         tag: "TTK COMMENT",
         msg: `Tidak ada video TikTok untuk client ${client_id} hari ini.`,

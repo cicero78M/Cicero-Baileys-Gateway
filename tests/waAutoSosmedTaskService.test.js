@@ -87,15 +87,22 @@ jest.unstable_mockModule('../src/model/tiktokCommentModel.js', () => ({
 
 //  Load SUT 
 let handleAutoSosmedTaskMessageIfApplicable;
+let clearOperatorRateLimit;
+let stopOperatorRateLimitEviction;
 
 beforeAll(async () => {
-  ({ handleAutoSosmedTaskMessageIfApplicable } = await import(
+  ({
+    handleAutoSosmedTaskMessageIfApplicable,
+    clearOperatorRateLimit,
+    stopOperatorRateLimitEviction,
+  } = await import(
     '../src/service/waAutoSosmedTaskService.js'
   ));
 });
 
 beforeEach(() => {
   jest.clearAllMocks();
+  clearOperatorRateLimit();
 
   // Happy-path defaults
   mockIsBroadcastMessage.mockReturnValue(true);
@@ -107,7 +114,7 @@ beforeEach(() => {
   mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
   mockEnqueueSend.mockResolvedValue(undefined);
   mockFetchSinglePostKhusus.mockResolvedValue({ like_count: 99 });
-  mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ commentCount: 42 });
+  mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ videoId: 'tt-default', commentCount: 42 });
   mockHandleFetchLikesInstagram.mockResolvedValue(undefined);
   mockHandleFetchKomentarTiktokBatch.mockResolvedValue(undefined);
   mockGetLikesByShortcode.mockResolvedValue([]);
@@ -115,6 +122,10 @@ beforeEach(() => {
   mockFindActiveSession.mockResolvedValue(null);
   mockFindActiveOperatorByPhone.mockResolvedValue(null);
   mockResolveClientIdForGroup.mockResolvedValue(null);
+});
+
+afterAll(() => {
+  stopOperatorRateLimitEviction();
 });
 
 const waClient = () => ({ readMessages: jest.fn().mockResolvedValue(undefined) });
@@ -249,7 +260,7 @@ describe('DM path  registered operator', () => {
       tiktokUrls: ['https://www.tiktok.com/@a/video/123'],
     });
     mockFetchSinglePostKhusus.mockResolvedValue({ like_count: 55 });
-    mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ commentCount: 10 });
+    mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ videoId: '123', commentCount: 10 });
     mockGetConfigOrDefault.mockResolvedValue('Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
 
     const result = await handleAutoSosmedTaskMessageIfApplicable({
@@ -280,7 +291,12 @@ describe('DM path  registered operator', () => {
 
     // Engagement sync handlers were called after post fetch
     expect(mockHandleFetchLikesInstagram).toHaveBeenCalledWith(null, null, clientId);
-    expect(mockHandleFetchKomentarTiktokBatch).toHaveBeenCalledWith(null, null, clientId);
+    expect(mockHandleFetchKomentarTiktokBatch).toHaveBeenCalledWith(
+      null,
+      null,
+      clientId,
+      { sourceType: 'manual_input', videoIds: ['123'] }
+    );
   });
 
   test('DB insert called with senderPhone for registered operator', async () => {
@@ -492,12 +508,9 @@ describe('DELTA — DM registered operator URL cap (T037)', () => {
 
     expect(result).toBe(true);
     expect(mockEnqueueSend).toHaveBeenCalledTimes(3); // Still 3 messages (recap, ack, task list)
-
-    // The URL cap is applied inside the service implementation but we're mocking extractUrls.
-    // We can't directly assert on the capped count via mockQuery because the service processes
-    // the URLs after capping. Instead, verify that the function completed successfully,
-    // which indicates the cap logic didn't break the flow.
-    expect(mockFetchSinglePostKhusus).toHaveBeenCalled(); // Some IG processing happened
+    expect(mockFetchSinglePostKhusus).toHaveBeenCalledTimes(7);
+    expect(mockFetchAndStoreSingleTiktokPost).toHaveBeenCalledTimes(3);
+    expect(mockQuery).toHaveBeenCalledTimes(12);
   });
 });
 
@@ -512,20 +525,19 @@ describe('DELTA — DM registered operator rate limit (T039)', () => {
     mockExtractUrls.mockReturnValue({ igUrls: ['https://instagram.com/p/xyz'], tiktokUrls: [] });
     mockGetConfigOrDefault.mockResolvedValue('3'); // Low rate limit for test
 
-    // The rate limit is tracked in-memory inside the service module.
-    // Instead of trying to simulate multiple calls with shared state,
-    // we can only test that a single call succeeds (rate limit hasn't been hit in this test isolation).
-    const result = await handleAutoSosmedTaskMessageIfApplicable({
-      text: 'pagi mohon izin dibantu like https://instagram.com/p/xyz',
-      chatId,
-      senderPhone,
-      messageKey: null,
-      waClient: waClient(),
-    });
+    let result;
+    for (let i = 0; i < 4; i += 1) {
+      result = await handleAutoSosmedTaskMessageIfApplicable({
+        text: 'pagi mohon izin dibantu like https://instagram.com/p/xyz',
+        chatId,
+        senderPhone,
+        messageKey: null,
+        waClient: waClient(),
+      });
+    }
 
-    // First call should succeed (not rate limited yet in fresh test)
     expect(result).toBe(true);
-    expect(mockEnqueueSend).toHaveBeenCalledTimes(3); // Normal 3-message response
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(9);
   });
 });
 
@@ -567,7 +579,7 @@ describe('DELTA — buildEngagementRecapText DB read failures (T040, T041)', () 
       .mockResolvedValueOnce('20') // rate limit
       .mockResolvedValue('Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
 
-    mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ commentCount: 33 });
+    mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ videoId: '456', commentCount: 33 });
     mockGetCommentsByVideoId.mockRejectedValue(new Error('TikTok DB connection failed'));
 
     const result = await handleAutoSosmedTaskMessageIfApplicable({

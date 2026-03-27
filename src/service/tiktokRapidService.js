@@ -78,21 +78,75 @@ function parsePosts(resData) {
   return candidateLists.map(normalizePostItem).filter(Boolean);
 }
 
-function parsePostDetail(resData) {
-  let payload = resData?.data ?? resData;
-  if (typeof payload === 'string') {
-    try {
-      payload = JSON.parse(payload);
-    } catch (err) {
-      payload = {};
+function parseJsonSafe(raw) {
+  if (typeof raw !== 'string') return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function findFirstPostLikeObject(source, maxDepth = 5, currentDepth = 0) {
+  if (!source || currentDepth > maxDepth) return null;
+
+  const parsedSource = parseJsonSafe(source);
+  if (!parsedSource || typeof parsedSource !== 'object') return null;
+
+  if (Array.isArray(parsedSource)) {
+    for (const entry of parsedSource) {
+      const found = findFirstPostLikeObject(entry, maxDepth, currentDepth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  const directCandidates = [
+    parsedSource?.itemInfo?.itemStruct,
+    parsedSource?.itemInfo?.item,
+    parsedSource?.itemStruct,
+    parsedSource?.aweme_detail,
+    parsedSource?.awemeDetail,
+    parsedSource?.detail,
+    parsedSource?.item,
+    parsedSource?.video,
+    parsedSource?.post,
+    parsedSource
+  ];
+
+  for (const candidate of directCandidates) {
+    const parsedCandidate = parseJsonSafe(candidate);
+    if (!parsedCandidate || typeof parsedCandidate !== 'object' || Array.isArray(parsedCandidate)) {
+      continue;
+    }
+
+    if (
+      parsedCandidate.id !== undefined ||
+      parsedCandidate.video_id !== undefined ||
+      parsedCandidate.aweme_id !== undefined ||
+      parsedCandidate.desc !== undefined ||
+      parsedCandidate.caption !== undefined ||
+      parsedCandidate.stats !== undefined ||
+      parsedCandidate.statsV2 !== undefined
+    ) {
+      return parsedCandidate;
     }
   }
 
-  if (payload?.itemInfo?.itemStruct) return payload.itemInfo.itemStruct;
-  if (payload?.data?.itemInfo?.itemStruct) return payload.data.itemInfo.itemStruct;
-  if (payload?.itemStruct) return payload.itemStruct;
-  if (payload?.itemInfo?.item) return payload.itemInfo.item;
+  for (const [key, value] of Object.entries(parsedSource)) {
+    if (['status_code', 'statusCode', 'message', 'msg', 'success'].includes(key)) continue;
+    const found = findFirstPostLikeObject(value, maxDepth, currentDepth + 1);
+    if (found) return found;
+  }
+
   return null;
+}
+
+function parsePostDetail(resData) {
+  const payload = parseJsonSafe(resData?.data ?? resData);
+  const postDetail = findFirstPostLikeObject(payload);
+  if (!postDetail) return null;
+  return normalizePostItem(postDetail);
 }
 
 async function requestRapidApiPosts({ host, key, endpoint, params }) {

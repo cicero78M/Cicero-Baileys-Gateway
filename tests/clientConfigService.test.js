@@ -6,10 +6,15 @@ const mockDbQuery = jest.fn();
 jest.unstable_mockModule('../src/repository/clientConfigRepository.js', () => ({
   getConfigValueWithDefault: mockGetConfigValueWithDefault,
   setConfigValue: jest.fn(),
+  getClientConfigurationGrouped: jest.fn(),
+  setMultipleConfigValues: jest.fn(),
+  getTemplateMessages: jest.fn(),
+  hasCustomConfiguration: jest.fn(),
 }));
 
 jest.unstable_mockModule('../src/db/postgres.js', () => ({
   query: mockDbQuery,
+  getClient: jest.fn(),
 }));
 
 let getConfig, getConfigOrDefault, resolveClientIdForGroup, stopCacheEviction, clearCache;
@@ -120,6 +125,7 @@ describe('resolveClientIdForGroup', () => {
     const result = await resolveClientIdForGroup('12345@g.us');
     expect(result).toBe('SATKER_A');
     expect(mockDbQuery).toHaveBeenCalledTimes(1);
+    expect(mockDbQuery.mock.calls[0][0]).toContain("config_key = 'client_group_jid'");
     expect(mockDbQuery.mock.calls[0][1]).toEqual(['12345@g.us']);
   });
 
@@ -130,6 +136,7 @@ describe('resolveClientIdForGroup', () => {
     const result = await resolveClientIdForGroup('99999@g.us');
     expect(result).toBe('SATKER_B');
     expect(mockDbQuery).toHaveBeenCalledTimes(2);
+    expect(mockDbQuery.mock.calls[1][0]).toContain('client_status = TRUE');
   });
 
   test('returns null when neither table has the group JID', async () => {
