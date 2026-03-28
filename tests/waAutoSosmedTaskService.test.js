@@ -343,7 +343,7 @@ describe('DM path  registered operator', () => {
     expect(mockEnqueueSend).not.toHaveBeenCalled();
   });
 
-  test('sends Response B (recap) + Response C (ack) + Response D (task list) for valid DM broadcast', async () => {
+  test('follows menu 8 flow for valid DM broadcast (start + summary)', async () => {
     mockIsBroadcastMessage.mockReturnValue(true);
     mockExtractUrls.mockReturnValue({
       igUrls: ['https://instagram.com/p/xyz'],
@@ -351,13 +351,6 @@ describe('DM path  registered operator', () => {
     });
     mockFetchSinglePostKhusus.mockResolvedValue({ shortcode: 'xyz', like_count: 55 });
     mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ videoId: '123', commentCount: 10 });
-    mockGetCommentsByVideoId.mockResolvedValue({ comments: ['@alpha'] });
-    mockGetUsersByClientFull.mockResolvedValue([
-      { nama: 'Personel A', title: 'Briptu', tiktok: '@alpha', exception: false },
-      { nama: 'Personel B', title: 'Brigpol', tiktok: '@beta', exception: false },
-      { nama: 'Personel C', title: 'Aipda', tiktok: '', exception: false },
-    ]);
-    mockGetConfigOrDefault.mockResolvedValue('Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
 
     const result = await handleAutoSosmedTaskMessageIfApplicable({
       text: 'pagi mohon izin dibantu like https://instagram.com/p/xyz https://www.tiktok.com/@a/video/123',
@@ -368,27 +361,16 @@ describe('DM path  registered operator', () => {
     });
 
     expect(result).toBe(true);
-    // Expect 3 messages: recap, ack, task list (no "Fetch sukses")
-    expect(mockEnqueueSend).toHaveBeenCalledTimes(3);
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(2);
 
     const texts = mockEnqueueSend.mock.calls.map(([, p]) => p.text);
 
-    // All sent to the correct JID
     mockEnqueueSend.mock.calls.forEach(([jid]) => expect(jid).toBe(chatId));
 
-    // Response 1: engagement recap with chakranarayana-style format header
-    expect(texts[0]).toMatch(/Mohon ijin Komandan/);
-    expect(texts[0]).toMatch(/\*Rekap Tugas Sosmed \(Auto Response\)\*/);
-    expect(texts[0]).toMatch(/\*TikTok \(Workflow Chakranarayana Menu 8\)\*/);
-    expect(texts[0]).toMatch(/\*Melaksanakan:\* 1 pers/);
-    expect(texts[0]).toMatch(/\*Belum melaksanakan:\* 1 pers/);
-    expect(texts[0]).toMatch(/\*Belum Input Username TikTok:\* 1 pers/);
-
-    // Response 2: ack contains clientId
-    expect(texts[1]).toContain(clientId);
-
-    // Response 3: task list
-    expect(texts[2]).toMatch(/Daftar tugas/);
+    expect(texts[0]).toMatch(/Proses input manual multi-link dimulai/);
+    expect(texts[1]).toMatch(/✅ Proses input manual multi-link selesai/);
+    expect(texts[1]).toMatch(/• Instagram berhasil: 1/);
+    expect(texts[1]).toMatch(/• TikTok berhasil: 1/);
 
     // Engagement sync handlers were called after post fetch
     expect(mockHandleFetchLikesInstagram).toHaveBeenCalledWith(
@@ -617,10 +599,10 @@ describe('DELTA — DM registered operator URL cap (T037)', () => {
     });
 
     expect(result).toBe(true);
-    expect(mockEnqueueSend).toHaveBeenCalledTimes(3); // Still 3 messages (recap, ack, task list)
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(2); // start + summary
     expect(mockFetchSinglePostKhusus).toHaveBeenCalledTimes(7);
     expect(mockFetchAndStoreSingleTiktokPost).toHaveBeenCalledTimes(3);
-    expect(mockQuery).toHaveBeenCalledTimes(12);
+    expect(mockQuery).toHaveBeenCalledTimes(10);
   });
 });
 
@@ -647,28 +629,28 @@ describe('DELTA — DM registered operator rate limit (T039)', () => {
     }
 
     expect(result).toBe(true);
-    expect(mockEnqueueSend).toHaveBeenCalledTimes(9);
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(6);
   });
 });
 
-describe('DELTA — buildEngagementRecapText DB read failures (T040, T041)', () => {
+describe('DELTA — DM registered operator failure summary', () => {
   const senderPhone = '628222';
   const chatId = `${senderPhone}@s.whatsapp.net`;
   const clientId = 'CL2';
 
-  test('logs warning when IG partisipan DB query throws and omits Partisipan line', async () => {
+  test('sends failed link list when one URL fails diproses', async () => {
     mockFindActiveOperatorByPhone.mockResolvedValue({ client_id: clientId });
     mockIsBroadcastMessage.mockReturnValue(true);
-    mockExtractUrls.mockReturnValue({ igUrls: ['https://instagram.com/p/xyz'], tiktokUrls: [] });
-    mockGetConfigOrDefault
-      .mockResolvedValueOnce('20') // rate limit
-      .mockResolvedValue('Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
+    mockExtractUrls.mockReturnValue({
+      igUrls: ['https://instagram.com/p/ok1'],
+      tiktokUrls: ['https://tiktok.com/video/456'],
+    });
 
-    mockFetchSinglePostKhusus.mockResolvedValue({ like_count: 42 });
-    mockGetLikesByShortcode.mockRejectedValue(new Error('DB connection failed'));
+    mockFetchSinglePostKhusus.mockResolvedValue({ shortcode: 'ok1', like_count: 42 });
+    mockFetchAndStoreSingleTiktokPost.mockRejectedValue(new Error('fetch failed'));
 
     const result = await handleAutoSosmedTaskMessageIfApplicable({
-      text: 'pagi mohon izin dibantu like https://instagram.com/p/xyz',
+      text: 'pagi mohon izin dibantu like https://instagram.com/p/ok1 https://tiktok.com/video/456',
       chatId,
       senderPhone,
       messageKey: null,
@@ -676,33 +658,11 @@ describe('DELTA — buildEngagementRecapText DB read failures (T040, T041)', () 
     });
 
     expect(result).toBe(true);
-    const recapText = mockEnqueueSend.mock.calls[0][1].text;
-    expect(recapText).toContain('✅ https://instagram.com/p/xyz — 42 likes');
-    expect(recapText).not.toContain('Partisipan:');
-  });
-
-  test('logs warning when TikTok partisipan DB query throws and omits Partisipan line', async () => {
-    mockFindActiveOperatorByPhone.mockResolvedValue({ client_id: clientId });
-    mockIsBroadcastMessage.mockReturnValue(true);
-    mockExtractUrls.mockReturnValue({ igUrls: [], tiktokUrls: ['https://tiktok.com/video/456'] });
-    mockGetConfigOrDefault
-      .mockResolvedValueOnce('20') // rate limit
-      .mockResolvedValue('Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
-
-    mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ videoId: '456', commentCount: 33 });
-    mockGetCommentsByVideoId.mockRejectedValue(new Error('TikTok DB connection failed'));
-
-    const result = await handleAutoSosmedTaskMessageIfApplicable({
-      text: 'pagi mohon izin dibantu like https://tiktok.com/video/456',
-      chatId,
-      senderPhone,
-      messageKey: null,
-      waClient: waClient(),
-    });
-
-    expect(result).toBe(true);
-    const recapText = mockEnqueueSend.mock.calls[0][1].text;
-    expect(recapText).toContain('✅ https://tiktok.com/video/456 — 33 komentar');
-    expect(recapText).not.toContain('Partisipan:');
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(3);
+    expect(mockEnqueueSend.mock.calls[0][1].text).toMatch(/Proses input manual multi-link dimulai/);
+    expect(mockEnqueueSend.mock.calls[1][1].text).toMatch(/• Instagram berhasil: 1/);
+    expect(mockEnqueueSend.mock.calls[1][1].text).toMatch(/• TikTok berhasil: 0/);
+    expect(mockEnqueueSend.mock.calls[2][1].text).toMatch(/Sebagian link gagal diproses/);
+    expect(mockEnqueueSend.mock.calls[2][1].text).toMatch(/https:\/\/tiktok.com\/video\/456/);
   });
 });

@@ -716,9 +716,13 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
       return true;
     }
 
-    logger.info({ phoneNumber, clientId, igUrls, tiktokUrls }, 'waAutoSosmedTask: DM registered operator');
+    const allHttpUrls = extractAllHttpUrls(text);
+    const ignoredNonPlatformCount = Math.max(0, allHttpUrls.length - (igUrls.length + tiktokUrls.length));
 
-    const formattedDate = formatDate(new Date());
+    logger.info({ phoneNumber, clientId, igUrls, tiktokUrls, ignoredNonPlatformCount }, 'waAutoSosmedTask: DM registered operator');
+
+    await enqueueSend(dmJid, { text: '⏳ Proses input manual multi-link dimulai.' });
+
     const igResults = await fetchInstagramPosts(igUrls, clientId);
     const tiktokResults = await fetchTiktokPosts(tiktokUrls, clientId);
     await fetchEngagementFromFetchedPosts(igResults, tiktokResults, clientId);
@@ -728,20 +732,25 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
       logger.error({ err, phoneNumber, clientId }, 'waAutoSosmedTask: DM DB upsert success tasks failed');
     }
 
-    // Response 1: engagement recap (with participants)
-    const recapText = await buildEngagementRecapText(igResults, tiktokResults, formattedDate, clientId);
-    await enqueueSend(dmJid, { text: recapText });
+    const igFailedItems = igResults.filter((item) => !item.ok);
+    const tiktokFailedItems = tiktokResults.filter((item) => !item.ok);
+    const summaryLines = [
+      '✅ Proses input manual multi-link selesai.',
+      `• Instagram berhasil: ${igResults.length - igFailedItems.length}`,
+      `• TikTok berhasil: ${tiktokResults.length - tiktokFailedItems.length}`,
+    ];
+    if (ignoredNonPlatformCount > 0) {
+      summaryLines.push(`• Link non-IG/TikTok diabaikan: ${ignoredNonPlatformCount}`);
+    }
+    await enqueueSend(dmJid, { text: summaryLines.join('\n') });
 
-    // Response 2: ack
-    const ackTemplate = await getConfigOrDefault(clientId, 'task_input_ack', 'Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
-    await enqueueSend(dmJid, { text: ackTemplate.replace('{client_id}', clientId) });
-
-    // Response 3: today's full task list
-    try {
-      const { igShortcodes, tiktokVideoIds } = await getTodayOperatorTaskList(clientId, phoneNumber);
-      await enqueueSend(dmJid, { text: buildTaskListText(igShortcodes, tiktokVideoIds, formattedDate) });
-    } catch (err) {
-      logger.error({ err, phoneNumber, clientId }, 'waAutoSosmedTask: failed to fetch today task list');
+    if (igFailedItems.length || tiktokFailedItems.length) {
+      const failedLines = [
+        '⚠️ Sebagian link gagal diproses:',
+        ...igFailedItems.map((item) => `- ${item.url}`),
+        ...tiktokFailedItems.map((item) => `- ${item.url}`),
+      ];
+      await enqueueSend(dmJid, { text: failedLines.join('\n') });
     }
 
     return true;
