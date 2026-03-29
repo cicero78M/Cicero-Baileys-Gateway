@@ -4,7 +4,7 @@ import { query } from '../db/postgres.js';
 import { enqueueSend } from './waOutbox.js';
 import { logger } from '../utils/logger.js';
 import { isBroadcastMessage, extractUrls, formatDate } from './sosmedBroadcastParser.js';
-import { resolveClientIdForGroup, getConfigOrDefault } from './clientConfigService.js';
+import { getConfigOrDefault } from './clientConfigService.js';
 import {
   findActiveSession,
   upsertSession,
@@ -133,42 +133,6 @@ export function cleanText(text) {
 }
 
 // DB helpers
-
-async function recordTasksToDB(igUrls, tiktokUrls, clientId, operatorPhone) {
-  const opArr = [];
-
-  for (const url of igUrls) {
-    const match = url.match(/(?:instagram\.com\/(?:p|reel|tv)\/|ig\.me\/p\/)([A-Za-z0-9_-]+)/i);
-    const shortcode = match?.[1] ?? url;
-    opArr.push(
-      query(
-        `INSERT INTO insta_post (client_id, shortcode, task_source, operator_phone, created_at)
-         VALUES ($1, $2, 'broadcast_wa', $3, NOW())
-         ON CONFLICT (shortcode) DO UPDATE
-           SET task_source    = 'broadcast_wa',
-               operator_phone = COALESCE(EXCLUDED.operator_phone, insta_post.operator_phone)`,
-        [clientId, shortcode, operatorPhone ?? null]
-      )
-    );
-  }
-
-  for (const url of tiktokUrls) {
-    const match = url.match(/video\/(\d+)/i);
-    const videoId = match?.[1] ?? url;
-    opArr.push(
-      query(
-        `INSERT INTO tiktok_post (client_id, video_id, task_source, operator_phone, created_at)
-         VALUES ($1, $2, 'broadcast_wa', $3, NOW())
-         ON CONFLICT (video_id) DO UPDATE
-           SET task_source    = 'broadcast_wa',
-               operator_phone = COALESCE(EXCLUDED.operator_phone, tiktok_post.operator_phone)`,
-        [clientId, videoId, operatorPhone ?? null]
-      )
-    );
-  }
-
-  await Promise.allSettled(opArr);
-}
 
 async function recordSuccessfulTasksToDB({ igResults, tiktokResults, clientId, operatorPhone }) {
   const opArr = [];
@@ -504,39 +468,8 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
 
   // GROUP PATH
   if (isGroup) {
-    const clientId = await resolveClientIdForGroup(chatId);
-    if (!clientId) {
-      logger.warn({ chatId }, 'waAutoSosmedTask: group JID has no registered client_id');
-      return false;
-    }
-
-    const config = await loadBroadcastConfig(clientId);
-    if (!isBroadcastMessage(text, config)) {
-      return false;
-    }
-
-    const { igUrls, tiktokUrls } = extractUrls(text);
-    const urlCount = igUrls.length + tiktokUrls.length;
-
-    // Delta 2 (FR-002): zero valid platform URLs → silent ignore, no ack
-    if (urlCount === 0) {
-      logger.warn({ clientId, chatId }, 'waAutoSosmedTask: group broadcast ignored — no valid platform URLs');
-      return false;
-    }
-
-    logger.info({ clientId, chatId, igUrls, tiktokUrls }, 'waAutoSosmedTask: group broadcast detected');
-
-    try {
-      await recordTasksToDB(igUrls, tiktokUrls, clientId, null);
-    } catch (err) {
-      logger.error({ err, clientId, chatId }, 'waAutoSosmedTask: DB insert failed');
-    }
-
-    const formattedDate = formatDate(new Date());
-    const ackText = `Ack! Tugas broadcast sosmed ${formattedDate} berhasil direkam. ${urlCount} URL telah dicatat.`;
-    await enqueueSend(chatId, { text: ackText });
-
-    return true;
+    logger.info({ chatId, senderPhone }, 'waAutoSosmedTask: group message skipped for auto sosmed task feature');
+    return false;
   }
 
   // DM PATH
