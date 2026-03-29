@@ -282,6 +282,22 @@ function buildTaskListText(igShortcodes, tiktokVideoIds, formattedDate) {
   return parts.join('\n\n');
 }
 
+async function sendPostInputMessages({ clientId, phoneNumber, dmJid, formattedDate, logContext }) {
+  const ackTemplate = await getConfigOrDefault(
+    clientId,
+    'task_input_ack',
+    'Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.'
+  );
+  await enqueueSend(dmJid, { text: ackTemplate.replace('{client_id}', clientId) });
+
+  try {
+    const { igShortcodes, tiktokVideoIds } = await getTodayOperatorTaskList(clientId, phoneNumber);
+    await enqueueSend(dmJid, { text: buildTaskListText(igShortcodes, tiktokVideoIds, formattedDate) });
+  } catch (err) {
+    logger.error({ err, phoneNumber, clientId }, logContext);
+  }
+}
+
 function normalizeHandle(value) {
   return String(value || '').trim().replace(/^@/, '').toLowerCase();
 }
@@ -583,24 +599,27 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
       `❌ Total gagal: ${totalFailed}`,
       `⏭️ Link non-IG/TikTok diabaikan: ${Math.max(0, ignoredNonPlatformCount)}`,
     ];
-    if (totalFailed > 0) {
-      const failedDetails = [...igFailedItems, ...tiktokFailedItems].map((item) => `- ${item.url}`);
-      summaryLines.push('', '*Detail link gagal:*', failedDetails.join('\n'));
-    }
     await enqueueSend(dmJid, { text: summaryLines.join('\n') });
+
+    if (totalFailed > 0) {
+      const failedLines = [
+        '⚠️ Sebagian link gagal diproses:',
+        ...igFailedItems.map((item) => `- ${item.url}`),
+        ...tiktokFailedItems.map((item) => `- ${item.url}`),
+      ];
+      await enqueueSend(dmJid, { text: failedLines.join('\n') });
+    }
+
+    await sendPostInputMessages({
+      clientId,
+      phoneNumber,
+      dmJid,
+      formattedDate,
+      logContext: 'waAutoSosmedTask: manual mode failed to fetch today task list',
+    });
 
     const recapText = await buildEngagementRecapText(igResults, tiktokResults, formattedDate, clientId);
     await enqueueSend(dmJid, { text: recapText });
-
-    const ackTemplate = await getConfigOrDefault(clientId, 'task_input_ack', 'Tugas dari broadcast Anda telah diinputkan untuk klien {client_id}.');
-    await enqueueSend(dmJid, { text: ackTemplate.replace('{client_id}', clientId) });
-
-    try {
-      const { igShortcodes, tiktokVideoIds } = await getTodayOperatorTaskList(clientId, phoneNumber);
-      await enqueueSend(dmJid, { text: buildTaskListText(igShortcodes, tiktokVideoIds, formattedDate) });
-    } catch (err) {
-      logger.error({ err, phoneNumber, clientId }, 'waAutoSosmedTask: manual mode failed to fetch today task list');
-    }
     return true;
   }
 
@@ -685,6 +704,14 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
       ];
       await enqueueSend(dmJid, { text: failedLines.join('\n') });
     }
+
+    await sendPostInputMessages({
+      clientId,
+      phoneNumber,
+      dmJid,
+      formattedDate: formatDate(new Date()),
+      logContext: 'waAutoSosmedTask: DM mode failed to fetch today task list',
+    });
 
     return true;
   }
