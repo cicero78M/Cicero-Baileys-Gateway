@@ -187,7 +187,7 @@ describe('group path (@g.us)', () => {
     expect(mockEnqueueSend).not.toHaveBeenCalled();
   });
 
-  test('records to DB and sends exactly one ack (Response A) for valid group broadcast', async () => {
+  test('skips group broadcast processing for auto sosmed feature', async () => {
     mockResolveClientIdForGroup.mockResolvedValue('CL1');
     mockIsBroadcastMessage.mockReturnValue(true);
     mockExtractUrls.mockReturnValue({ igUrls: ['https://instagram.com/p/abc123'], tiktokUrls: [] });
@@ -200,13 +200,9 @@ describe('group path (@g.us)', () => {
       waClient: waClient(),
     });
 
-    expect(result).toBe(true);
-    expect(mockQuery).toHaveBeenCalledTimes(1); // DB insert for IG URL
-    expect(mockEnqueueSend).toHaveBeenCalledTimes(1); // Response A
-    const [sendChatId, payload] = mockEnqueueSend.mock.calls[0];
-    expect(sendChatId).toBe(chatId);
-    expect(payload.text).toMatch(/Senin, 2 Juni 2025/);
-    expect(payload.text).toMatch(/1 URL/);
+    expect(result).toBe(false);
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(mockEnqueueSend).not.toHaveBeenCalled();
   });
 });
 
@@ -295,7 +291,7 @@ describe('DM path — manual input session', () => {
     expect(mockEnqueueSend.mock.calls[0][1].text).toMatch(/Proses input manual multi-link dimulai/);
     expect(mockEnqueueSend.mock.calls[1][1].text).toMatch(/Progress Instagram 1\/1: sukses/);
     expect(mockEnqueueSend.mock.calls[2][1].text).toMatch(/Progress TikTok 1\/1: sukses/);
-    expect(mockEnqueueSend.mock.calls[3][1].text).toMatch(/Summary proses input manual multi-link/);
+    expect(mockEnqueueSend.mock.calls[3][1].text).toMatch(/Proses input manual multi-link selesai/);
     expect(mockHandleFetchLikesInstagram).toHaveBeenCalled();
     expect(mockHandleFetchKomentarTiktokBatch).toHaveBeenCalled();
   });
@@ -361,7 +357,7 @@ describe('DM path  registered operator', () => {
     });
 
     expect(result).toBe(true);
-    expect(mockEnqueueSend).toHaveBeenCalledTimes(2);
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(4);
 
     const texts = mockEnqueueSend.mock.calls.map(([, p]) => p.text);
 
@@ -371,6 +367,8 @@ describe('DM path  registered operator', () => {
     expect(texts[1]).toMatch(/✅ Proses input manual multi-link selesai/);
     expect(texts[1]).toMatch(/• Instagram berhasil: 1/);
     expect(texts[1]).toMatch(/• TikTok berhasil: 1/);
+    expect(texts[2]).toMatch(/Tugas dari broadcast Anda telah diinputkan/);
+    expect(texts[3]).toMatch(/Daftar tugas sosmed Anda hari ini/);
 
     // Engagement sync handlers were called after post fetch
     expect(mockHandleFetchLikesInstagram).toHaveBeenCalledWith(
@@ -599,10 +597,10 @@ describe('DELTA — DM registered operator URL cap (T037)', () => {
     });
 
     expect(result).toBe(true);
-    expect(mockEnqueueSend).toHaveBeenCalledTimes(2); // start + summary
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(4); // start + summary + ack + list
     expect(mockFetchSinglePostKhusus).toHaveBeenCalledTimes(7);
     expect(mockFetchAndStoreSingleTiktokPost).toHaveBeenCalledTimes(3);
-    expect(mockQuery).toHaveBeenCalledTimes(10);
+    expect(mockQuery).toHaveBeenCalledTimes(12);
   });
 });
 
@@ -629,7 +627,7 @@ describe('DELTA — DM registered operator rate limit (T039)', () => {
     }
 
     expect(result).toBe(true);
-    expect(mockEnqueueSend).toHaveBeenCalledTimes(6);
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(12);
   });
 });
 
@@ -658,11 +656,109 @@ describe('DELTA — DM registered operator failure summary', () => {
     });
 
     expect(result).toBe(true);
-    expect(mockEnqueueSend).toHaveBeenCalledTimes(3);
+    expect(mockEnqueueSend).toHaveBeenCalledTimes(5);
     expect(mockEnqueueSend.mock.calls[0][1].text).toMatch(/Proses input manual multi-link dimulai/);
     expect(mockEnqueueSend.mock.calls[1][1].text).toMatch(/• Instagram berhasil: 1/);
     expect(mockEnqueueSend.mock.calls[1][1].text).toMatch(/• TikTok berhasil: 0/);
     expect(mockEnqueueSend.mock.calls[2][1].text).toMatch(/Sebagian link gagal diproses/);
     expect(mockEnqueueSend.mock.calls[2][1].text).toMatch(/https:\/\/tiktok.com\/video\/456/);
+    expect(mockEnqueueSend.mock.calls[3][1].text).toMatch(/Tugas dari broadcast Anda telah diinputkan/);
+    expect(mockEnqueueSend.mock.calls[4][1].text).toMatch(/Daftar tugas sosmed Anda hari ini/);
+  });
+});
+
+describe('Guard kontrak final response - manual vs operator biasa', () => {
+  const base = {
+    messageKey: null,
+    waClient: waClient(),
+  };
+
+  const cases = [
+    {
+      name: 'input campuran IG/TikTok + non-platform links',
+      text: 'cek https://instagram.com/p/mix123 https://www.tiktok.com/@a/video/321 https://example.com/readme',
+      extract: {
+        igUrls: ['https://instagram.com/p/mix123'],
+        tiktokUrls: ['https://www.tiktok.com/@a/video/321'],
+      },
+      igFetch: () => mockFetchSinglePostKhusus.mockResolvedValue({ shortcode: 'mix123', like_count: 1 }),
+      tiktokFetch: () => mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ videoId: '321', commentCount: 2 }),
+      expectFailed: false,
+    },
+    {
+      name: 'ada gagal parsing sebagian link',
+      text: 'cek https://instagram.com/p/ok123 https://www.tiktok.com/@a/video/999',
+      extract: {
+        igUrls: ['https://instagram.com/p/ok123'],
+        tiktokUrls: ['https://www.tiktok.com/@a/video/999'],
+      },
+      igFetch: () => mockFetchSinglePostKhusus.mockResolvedValue({ shortcode: 'ok123', like_count: 1 }),
+      tiktokFetch: () => mockFetchAndStoreSingleTiktokPost.mockRejectedValue(new Error('partial fail')),
+      expectFailed: true,
+    },
+    {
+      name: 'semua sukses',
+      text: 'cek https://instagram.com/p/success1 https://www.tiktok.com/@a/video/777',
+      extract: {
+        igUrls: ['https://instagram.com/p/success1'],
+        tiktokUrls: ['https://www.tiktok.com/@a/video/777'],
+      },
+      igFetch: () => mockFetchSinglePostKhusus.mockResolvedValue({ shortcode: 'success1', like_count: 1 }),
+      tiktokFetch: () => mockFetchAndStoreSingleTiktokPost.mockResolvedValue({ videoId: '777', commentCount: 2 }),
+      expectFailed: false,
+    },
+  ];
+
+  test.each(cases)('manual session: %s', async ({ text, extract, igFetch, tiktokFetch, expectFailed }) => {
+    const senderPhone = '628800';
+    const chatId = `${senderPhone}@s.whatsapp.net`;
+    mockFindActiveSession.mockResolvedValue({ stage: 'manual_input_sosmed' });
+    mockFindActiveOperatorByPhone.mockResolvedValue({ client_id: 'CLM' });
+    mockExtractUrls.mockReturnValue(extract);
+    igFetch();
+    tiktokFetch();
+
+    const handled = await handleAutoSosmedTaskMessageIfApplicable({
+      ...base,
+      text,
+      chatId,
+      senderPhone,
+    });
+
+    expect(handled).toBe(true);
+    const texts = mockEnqueueSend.mock.calls.map(([, payload]) => payload.text);
+    expect(texts.find((t) => /Proses input manual multi-link selesai/.test(t))).toBeTruthy();
+    expect(texts.find((t) => /Tugas dari broadcast Anda telah diinputkan/.test(t))).toBeTruthy();
+    expect(texts.find((t) => /Daftar tugas sosmed Anda hari ini/.test(t))).toBeTruthy();
+    if (expectFailed) {
+      expect(texts.find((t) => /Sebagian link gagal diproses/.test(t))).toBeTruthy();
+    }
+  });
+
+  test.each(cases)('operator biasa: %s', async ({ text, extract, igFetch, tiktokFetch, expectFailed }) => {
+    const senderPhone = '628801';
+    const chatId = `${senderPhone}@s.whatsapp.net`;
+    mockFindActiveSession.mockResolvedValue(null);
+    mockFindActiveOperatorByPhone.mockResolvedValue({ client_id: 'CLO' });
+    mockIsBroadcastMessage.mockReturnValue(true);
+    mockExtractUrls.mockReturnValue(extract);
+    igFetch();
+    tiktokFetch();
+
+    const handled = await handleAutoSosmedTaskMessageIfApplicable({
+      ...base,
+      text: `pagi mohon izin dibantu like ${text}`,
+      chatId,
+      senderPhone,
+    });
+
+    expect(handled).toBe(true);
+    const texts = mockEnqueueSend.mock.calls.map(([, payload]) => payload.text);
+    expect(texts.find((t) => /Proses input manual multi-link selesai/.test(t))).toBeTruthy();
+    expect(texts.find((t) => /Tugas dari broadcast Anda telah diinputkan/.test(t))).toBeTruthy();
+    expect(texts.find((t) => /Daftar tugas sosmed Anda hari ini/.test(t))).toBeTruthy();
+    if (expectFailed) {
+      expect(texts.find((t) => /Sebagian link gagal diproses/.test(t))).toBeTruthy();
+    }
   });
 });

@@ -298,6 +298,69 @@ async function sendPostInputMessages({ clientId, phoneNumber, dmJid, formattedDa
   }
 }
 
+function buildProcessingSummaryText({
+  igResults,
+  tiktokResults,
+  ignoredNonPlatformCount,
+}) {
+  const igFailedItems = igResults.filter((item) => !item.ok);
+  const tiktokFailedItems = tiktokResults.filter((item) => !item.ok);
+
+  const summaryLines = [
+    '✅ Proses input manual multi-link selesai.',
+    `• Instagram berhasil: ${igResults.length - igFailedItems.length}`,
+    `• TikTok berhasil: ${tiktokResults.length - tiktokFailedItems.length}`,
+    `• Total gagal: ${igFailedItems.length + tiktokFailedItems.length}`,
+    `• Link non-IG/TikTok diabaikan: ${Math.max(0, ignoredNonPlatformCount)}`,
+  ];
+
+  return {
+    summaryText: summaryLines.join('\n'),
+    igFailedItems,
+    tiktokFailedItems,
+  };
+}
+
+async function sendUnifiedFinalMessages({
+  clientId,
+  phoneNumber,
+  dmJid,
+  igResults,
+  tiktokResults,
+  ignoredNonPlatformCount,
+  formattedDate,
+  logContext,
+}) {
+  const {
+    summaryText,
+    igFailedItems,
+    tiktokFailedItems,
+  } = buildProcessingSummaryText({
+    igResults,
+    tiktokResults,
+    ignoredNonPlatformCount,
+  });
+
+  await enqueueSend(dmJid, { text: summaryText });
+
+  if (igFailedItems.length || tiktokFailedItems.length) {
+    const failedLines = [
+      '⚠️ Sebagian link gagal diproses:',
+      ...igFailedItems.map((item) => `- ${item.url}`),
+      ...tiktokFailedItems.map((item) => `- ${item.url}`),
+    ];
+    await enqueueSend(dmJid, { text: failedLines.join('\n') });
+  }
+
+  await sendPostInputMessages({
+    clientId,
+    phoneNumber,
+    dmJid,
+    formattedDate,
+    logContext,
+  });
+}
+
 function normalizeHandle(value) {
   return String(value || '').trim().replace(/^@/, '').toLowerCase();
 }
@@ -465,6 +528,13 @@ async function loadBroadcastConfig(clientId) {
 }
 
 export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, senderPhone, messageKey, waClient }) {
+  // Kontrak urutan response final operator (manual session & operator biasa):
+  // 1) start
+  // 2) progress (jika mode mengirim progress)
+  // 3) summary selesai
+  // 4) fail list (jika ada)
+  // 5) ACK
+  // 6) list tugas hari ini
   // FR-010: always ignore status@broadcast
   if (chatId === 'status@broadcast') return false;
 
@@ -589,31 +659,13 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
       logger.error({ err, phoneNumber, clientId }, 'waAutoSosmedTask: manual mode DB upsert success tasks failed');
     }
 
-    const igFailedItems = igResults.filter((item) => !item.ok);
-    const tiktokFailedItems = tiktokResults.filter((item) => !item.ok);
-    const totalFailed = igFailedItems.length + tiktokFailedItems.length;
-    const summaryLines = [
-      'Summary proses input manual multi-link:',
-      `✅ Instagram berhasil: ${igResults.length - igFailedItems.length}`,
-      `✅ TikTok berhasil: ${tiktokResults.length - tiktokFailedItems.length}`,
-      `❌ Total gagal: ${totalFailed}`,
-      `⏭️ Link non-IG/TikTok diabaikan: ${Math.max(0, ignoredNonPlatformCount)}`,
-    ];
-    await enqueueSend(dmJid, { text: summaryLines.join('\n') });
-
-    if (totalFailed > 0) {
-      const failedLines = [
-        '⚠️ Sebagian link gagal diproses:',
-        ...igFailedItems.map((item) => `- ${item.url}`),
-        ...tiktokFailedItems.map((item) => `- ${item.url}`),
-      ];
-      await enqueueSend(dmJid, { text: failedLines.join('\n') });
-    }
-
-    await sendPostInputMessages({
+    await sendUnifiedFinalMessages({
       clientId,
       phoneNumber,
       dmJid,
+      igResults,
+      tiktokResults,
+      ignoredNonPlatformCount,
       formattedDate,
       logContext: 'waAutoSosmedTask: manual mode failed to fetch today task list',
     });
@@ -684,31 +736,13 @@ export async function handleAutoSosmedTaskMessageIfApplicable({ text, chatId, se
       logger.error({ err, phoneNumber, clientId }, 'waAutoSosmedTask: DM DB upsert success tasks failed');
     }
 
-    const igFailedItems = igResults.filter((item) => !item.ok);
-    const tiktokFailedItems = tiktokResults.filter((item) => !item.ok);
-    const summaryLines = [
-      '✅ Proses input manual multi-link selesai.',
-      `• Instagram berhasil: ${igResults.length - igFailedItems.length}`,
-      `• TikTok berhasil: ${tiktokResults.length - tiktokFailedItems.length}`,
-    ];
-    if (ignoredNonPlatformCount > 0) {
-      summaryLines.push(`• Link non-IG/TikTok diabaikan: ${ignoredNonPlatformCount}`);
-    }
-    await enqueueSend(dmJid, { text: summaryLines.join('\n') });
-
-    if (igFailedItems.length || tiktokFailedItems.length) {
-      const failedLines = [
-        '⚠️ Sebagian link gagal diproses:',
-        ...igFailedItems.map((item) => `- ${item.url}`),
-        ...tiktokFailedItems.map((item) => `- ${item.url}`),
-      ];
-      await enqueueSend(dmJid, { text: failedLines.join('\n') });
-    }
-
-    await sendPostInputMessages({
+    await sendUnifiedFinalMessages({
       clientId,
       phoneNumber,
       dmJid,
+      igResults,
+      tiktokResults,
+      ignoredNonPlatformCount,
       formattedDate: formatDate(new Date()),
       logContext: 'waAutoSosmedTask: DM mode failed to fetch today task list',
     });
