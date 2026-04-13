@@ -33,19 +33,36 @@ function normaliseIndonesian(str) {
     .replace(/\bIjin\b/g, 'Izin');
 }
 
+function normalizeForKeywordMatching(str) {
+  return normaliseIndonesian(String(str || ''))
+    .toLowerCase()
+    .normalize('NFKC')
+    .replace(/[\u200b-\u200d\u2060\ufeff]/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function isBroadcastMessage(text, config) {
   if (!text || typeof text !== 'string') return false;
 
   const normText = normaliseIndonesian(text);
+  const normalizedTextForMatch = normalizeForKeywordMatching(text);
 
-  const hasSalam = hasAnyKeyword(normText, config.broadcast_trigger_keywords);
+  const hasSalam = hasAnyKeyword(
+    normalizedTextForMatch,
+    normalizeForKeywordMatching(config.broadcast_trigger_keywords).replace(/\s+/g, ',')
+  );
   if (!hasSalam) return false;
 
-  const requiredPhrase = config.broadcast_required_phrase;
-  const hasPhrase = normText.toLowerCase().includes(requiredPhrase.toLowerCase());
+  const requiredPhrase = normalizeForKeywordMatching(config.broadcast_required_phrase);
+  const hasPhrase = normalizedTextForMatch.includes(requiredPhrase);
   if (!hasPhrase) return false;
 
-  const hasAction = hasAnyKeyword(normText, config.broadcast_action_keywords);
+  const hasAction = hasAnyKeyword(
+    normalizedTextForMatch,
+    normalizeForKeywordMatching(config.broadcast_action_keywords).replace(/\s+/g, ',')
+  );
   if (!hasAction) return false;
 
   return true;
