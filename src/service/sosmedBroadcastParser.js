@@ -14,6 +14,33 @@ const INDONESIAN_MONTHS = [
 
 const IG_PATTERN = /https?:\/\/(?:[a-z0-9-]+\.)*(?:instagram\.com|ig\.me)\/[^\s)>]*/gi;
 const TIKTOK_PATTERN = /https?:\/\/(?:[a-z0-9-]+\.)*(?:tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)\/[^\s)>]*/gi;
+const SECTION_URL_PATTERN = /https?:\/\/[^\s)>]+/gi;
+
+function extractUrlsBySectionLabel(text, sectionLabels) {
+  if (!text || typeof text !== 'string') return [];
+  const lines = text.split(/\r?\n/);
+  const urls = [];
+  let active = false;
+
+  for (const rawLine of lines) {
+    const line = String(rawLine || '').trim();
+    if (!line) continue;
+
+    const normalized = line.toUpperCase().replace(/\s+/g, '');
+    const isSectionHeader = normalized.endsWith(':');
+    if (isSectionHeader) {
+      active = sectionLabels.some((label) => normalized.startsWith(`${label}:`));
+      continue;
+    }
+
+    if (!active) continue;
+
+    const found = line.match(SECTION_URL_PATTERN) || [];
+    urls.push(...found);
+  }
+
+  return urls;
+}
 
 /**
  * Determine whether a raw WA message text is a broadcast tugas sosmed.
@@ -78,8 +105,15 @@ export function isBroadcastMessage(text, config) {
 export function extractUrls(text) {
   if (!text || typeof text !== 'string') return { igUrls: [], tiktokUrls: [] };
 
-  const igUrls = Array.from(new Set((text.match(IG_PATTERN) || []).map((u) => u.trim())));
-  const tiktokUrls = Array.from(new Set((text.match(TIKTOK_PATTERN) || []).map((u) => u.trim())));
+  const igSectionUrls = extractUrlsBySectionLabel(text, ['INSTAGRAM', 'IG']);
+  const tiktokSectionUrls = extractUrlsBySectionLabel(text, ['TIKTOK', 'TIK TOK']);
+
+  const igUrls = Array.from(
+    new Set([...(text.match(IG_PATTERN) || []), ...igSectionUrls].map((u) => u.trim()))
+  );
+  const tiktokUrls = Array.from(
+    new Set([...(text.match(TIKTOK_PATTERN) || []), ...tiktokSectionUrls].map((u) => u.trim()))
+  );
 
   return { igUrls, tiktokUrls };
 }
