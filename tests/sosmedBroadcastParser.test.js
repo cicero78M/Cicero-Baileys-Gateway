@@ -123,6 +123,49 @@ describe('extractUrls', () => {
     expect(tiktokUrls).toHaveLength(1);
   });
 
+  test('captures only Instagram and TikTok links from structured multi-platform format', () => {
+    const text = `
+*Selamat Pagi Komandan, senior dan RR*
+
+Mohon ijin dibantu dan disampaikan kepada seluruh teman2 dan keluarga dalam WAG ini untuk berpartisipasi memberikan respon link dibawah dengan :
+
+*- follow*
+*- like*
+*- share*
+*- comment*
+*- subscribe*
+*- repost*
+
+*1. Komdigi dan Polri Kompak Berantas Kejahatan Digital, Integrasikan dengan Command Center*
+
+TIKTOK :
+https://www.tiktok.com/@koma_indonesia/video/7628616371366071572?is_from_webapp=1&sender_device=pc&web_id=7608794291620611605
+
+YOUTUBE :
+https://youtube.com/shorts/cnr4GgMoQy8?feature=share
+
+INSTAGRAM :
+https://www.instagram.com/reel/DXHWJTllIdM/?utm_source=ig_web_copy_link&igsh=MzRlODBiNWFlZA==
+
+TWITTER :
+https://x.com/KomaNewsroom/status/2044054762962989438?s=20
+
+THREADS :
+https://www.threads.com/@komadotid/post/DXHWO6IjLTQ?xmt=AQF0Pe7xXgZ1LAmt1Mh0YvPxq2tNgbMzILwNg1gLKr4--A
+
+SNACKVIDEO :
+https://sck.io/p/udZOGM9Q
+`;
+
+    const { igUrls, tiktokUrls } = extractUrls(text);
+    expect(igUrls).toEqual([
+      'https://www.instagram.com/reel/DXHWJTllIdM/?utm_source=ig_web_copy_link&igsh=MzRlODBiNWFlZA==',
+    ]);
+    expect(tiktokUrls).toEqual([
+      'https://www.tiktok.com/@koma_indonesia/video/7628616371366071572?is_from_webapp=1&sender_device=pc&web_id=7608794291620611605',
+    ]);
+  });
+
   test('deduplicates repeated URLs', () => {
     const url = 'https://www.instagram.com/p/ABC123/';
     const { igUrls } = extractUrls(`${url} ${url}`);
