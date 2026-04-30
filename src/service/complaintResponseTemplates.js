@@ -228,6 +228,7 @@ export function buildOperatorResponse(triageResult, parsed) {
       lines.push('2) Ulangi aksi pada konten target resmi terbaru.');
       lines.push('3) Tunggu sinkronisasi ±30 menit lalu validasi ulang.');
     }
+    lines.push('4) Jika masih belum terbaca setelah langkah di atas, akun mungkin kena shadowban. Harus ganti akun baru.');
     return lines.join('\n') + externalNaNote;
   }
 
