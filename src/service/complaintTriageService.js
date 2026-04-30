@@ -38,6 +38,38 @@ function hasCommentIssue(issues = []) {
   return issues.some((issue) => /komentar|comment/i.test(issue || ''));
 }
 
+function computeRelevanceScore(profile) {
+  if (!profile || profile.exists === false) return -1;
+  const base = profile.recentActivityScore !== null && profile.recentActivityScore !== undefined
+    ? profile.recentActivityScore
+    : ((profile.followers ?? 0) + (profile.posts ?? 0) * 2 + (profile.likes ?? 0));
+  let score = base;
+  if (profile.isPrivate) score *= 0.5;
+  if (profile.hasProfilePic === false) score *= 0.6;
+  if ((profile.posts ?? 0) === 0) score *= 0.5;
+  return score;
+}
+
+function determineMoreRelevantAccount(reportedProfile, dbProfile, dbAuditCount = 0) {
+  const reportedScore = computeRelevanceScore(reportedProfile);
+  const dbScore = computeRelevanceScore(dbProfile);
+
+  if (reportedScore < 0 && dbScore < 0) return 'unknown';
+  if (reportedScore < 0) return 'db';
+  if (dbScore < 0) return 'reported';
+
+  // Prefer DB account when it has meaningful audit history and no large quality gap.
+  if (dbAuditCount > 0) {
+    const scoreGap = reportedScore - dbScore;
+    const reportedHasVeryLowSignals =
+      (reportedProfile?.posts ?? 0) === 0 ||
+      (reportedProfile?.followers ?? 0) < 10;
+    if (scoreGap <= 25 || reportedHasVeryLowSignals) return 'db';
+  }
+
+  return reportedScore >= dbScore ? 'reported' : 'db';
+}
+
 /**
  * Assess the profile-level condition codes for a single social profile.
  * Returns an ordered priority list: ACCOUNT_PRIVATE > NO_PROFILE_PHOTO > NO_CONTENT+LOW_TRUST.
@@ -195,21 +227,11 @@ export async function triageComplaint(parsed, { db, now = new Date(), rapidApi, 
 
         const pairResults = await Promise.all(fetchTasks);
 
-        // Relevance: account existence + aggregated activity score (correct field names from mapProviderToSocialProfile)
-        const relScore = (p) => {
-          if (!p || p.exists === false) return -1;
-          if (p.recentActivityScore !== null && p.recentActivityScore !== undefined) {
-            return p.isPrivate ? p.recentActivityScore * 0.5 : p.recentActivityScore;
-          }
-          return ((p.followers ?? 0) + (p.posts ?? 0) * 2 + (p.likes ?? 0)) * (p.isPrivate ? 0.5 : 1);
-        };
-
         const mismatchData = {};
         for (const { platform, rp, dp } of pairResults) {
           rapidEvidence[platform] = rp;
-          const rScore = relScore(rp);
-          const dScore = relScore(dp);
-          const moreRelevant = rScore < 0 && dScore < 0 ? 'unknown' : rScore >= dScore ? 'reported' : 'db';
+          const dbAuditCount = platform === 'instagram' ? historicalAuditLikeCount : historicalAuditCommentCount;
+          const moreRelevant = determineMoreRelevantAccount(rp, dp, dbAuditCount);
           mismatchData[platform] = { reportedProfile: rp, dbProfile: dp, moreRelevant };
         }
         result.evidence.mismatch = mismatchData;
