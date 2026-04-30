@@ -215,6 +215,9 @@ export function buildOperatorResponse(triageResult, parsed) {
 
   if (triageResult.diagnosisCode === 'ALREADY_PARTICIPATED' || triageResult.diagnoses?.includes('ALREADY_PARTICIPATED')) {
     const latestPostUrl = triageResult?.evidence?.latestPostUrl;
+    const recentLikeCount = triageResult?.evidence?.internal?.auditLikeCount ?? 0;
+    const recentCommentCount = triageResult?.evidence?.internal?.auditCommentCount ?? 0;
+    const hasRecentAudit = recentLikeCount > 0 || recentCommentCount > 0;
     const lines = [
       `Akun ${platformLabel} telah tercatat *pernah berpartisipasi* sebelumnya.`,
       'Kemungkinan aksi terbaru belum tersinkronisasi dalam window terbaru.',
@@ -228,7 +231,11 @@ export function buildOperatorResponse(triageResult, parsed) {
       lines.push('2) Ulangi aksi pada konten target resmi terbaru.');
       lines.push('3) Tunggu sinkronisasi ±30 menit lalu validasi ulang.');
     }
-    lines.push('4) Jika masih belum terbaca setelah langkah di atas, akun mungkin kena shadowban. Harus ganti akun baru.');
+    if (hasRecentAudit) {
+      lines.push('4) Jejak audit terbaru sudah ada. Lanjutkan dengan akun ini dan eskalasi jika status absensi belum berubah.');
+    } else {
+      lines.push('4) Jika masih belum terbaca setelah 2x sinkronisasi, audit profil (private/foto profil/konten). Ganti akun hanya jika akun terkonfirmasi bermasalah.');
+    }
     return lines.join('\n') + externalNaNote;
   }
 
