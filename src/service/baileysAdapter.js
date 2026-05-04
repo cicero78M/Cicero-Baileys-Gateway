@@ -255,6 +255,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             reason,
           }));
           emitter.emit('auth_failure', `Logged out: ${reason}`);
+          setTimeout(() => reinitializeClient('logged_out', { resetAuthSession: true }), 1000);
         } else if (shouldReconnect && connectionRetries < maxConnectionRetries) {
           connectionRetries++;
           writeStructuredLog('info', buildStructuredLog({
@@ -323,11 +324,14 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     registerEventListeners();
   };
 
-  const reinitializeClient = async (reason) => {
+  const reinitializeClient = async (reason, options = {}) => {
+    const { resetAuthSession = false } = options;
+
     writeStructuredLog('info', buildStructuredLog({
       clientId,
       event: 'reinitializing_client',
       reason,
+      resetAuthSession,
     }));
 
     // Close existing socket
@@ -338,6 +342,19 @@ export async function createBaileysClient(clientId = 'wa-admin') {
         writeStructuredLog('warn', buildStructuredLog({
           clientId,
           event: 'socket_close_error',
+          error: err.message,
+        }));
+      }
+    }
+
+    if (resetAuthSession) {
+      try {
+        await rm(authDir, { recursive: true, force: true });
+        await mkdir(authDir, { recursive: true });
+      } catch (err) {
+        writeStructuredLog('warn', buildStructuredLog({
+          clientId,
+          event: 'auth_session_reset_failed',
           error: err.message,
         }));
       }
