@@ -287,7 +287,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
         }
       } else if (connection === 'connecting') {
         connectState = 'connecting';
-        emitter.emit('change_state', 'CONNECTED');
+        emitter.emit('change_state', 'CONNECTING');
       }
     };
 
