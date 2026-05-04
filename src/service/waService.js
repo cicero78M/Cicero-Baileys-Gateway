@@ -446,6 +446,8 @@ function inferClientReadyState({ readinessState, observedState }) {
 }
 
 function snapshotReadinessState({ readinessState, client, observedState = null }) {
+  const includeQrPayload = readinessState.awaitingQrScan && Boolean(readinessState.lastQrPayloadSeen);
+
   return {
     label: readinessState.label,
     ready: inferClientReadyState({ readinessState, observedState }),
@@ -457,6 +459,7 @@ function snapshotReadinessState({ readinessState, client, observedState = null }
       : null,
     lastAuthFailureMessage: readinessState.lastAuthFailureMessage,
     lastQrAt: readinessState.lastQrAt ? new Date(readinessState.lastQrAt).toISOString() : null,
+    qrPayload: includeQrPayload ? readinessState.lastQrPayloadSeen : null,
     lastLifecycleEvent: readinessState.lastLifecycleEvent,
     lastLifecycleAt: readinessState.lastLifecycleAt
       ? new Date(readinessState.lastLifecycleAt).toISOString()
