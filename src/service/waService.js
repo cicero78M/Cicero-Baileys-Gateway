@@ -142,7 +142,7 @@ function registerClientMessageHandler(client, fromAdapter, handler) {
 // =======================
 
 const DEFAULT_AUTH_DATA_PARENT_DIR = ".cicero";
-const DEFAULT_AUTH_DATA_DIR = "wwebjs_auth";
+const DEFAULT_AUTH_DATA_DIR = "baileys_auth";
 const defaultGatewayClientId = "wa-gateway";
 const rawGatewayClientId = String(env.GATEWAY_WA_CLIENT_ID || "");
 const trimmedGatewayClientId = rawGatewayClientId.trim();
@@ -468,6 +468,11 @@ function snapshotReadinessState({ readinessState, client, observedState = null }
     fatalInitError: client?.fatalInitError || null,
     puppeteerExecutablePath: client?.puppeteerExecutablePath || null,
     sessionPath: client?.sessionPath || null,
+    authDataPath: client?.authDataPath || null,
+    signalErrors:
+      typeof client?.getSignalErrorMetrics === "function"
+        ? client.getSignalErrorMetrics()
+        : null,
     clientId: client?.clientId || null,
   };
 }

@@ -88,6 +88,95 @@ const LOGOUT_DISCONNECT_REASONS = new Set([
   DisconnectReason.timedOut,
 ]);
 
+const SIGNAL_ERROR_PATTERNS = [
+  { code: 'BAD_MAC', pattern: /bad mac/i },
+  { code: 'NO_SESSION', pattern: /no session/i },
+  { code: 'SESSION_ERROR', pattern: /session error/i },
+];
+const SIGNAL_ERROR_WINDOW_MS = 5 * 60 * 1000;
+const SIGNAL_ERROR_MAX_EVENTS = 100;
+
+function createSignalErrorMetrics() {
+  return {
+    total: 0,
+    byCode: {},
+    recent: [],
+    lastEventAt: null,
+    lastCode: null,
+    lastMessage: null,
+  };
+}
+
+function redactSignalErrorMessage(message) {
+  return String(message || '')
+    .replace(/\b\d{8,}\b/g, '[number]')
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]')
+    .slice(0, 240);
+}
+
+function classifySignalErrorFromArgs(args) {
+  const text = args
+    .map((arg) => {
+      if (typeof arg === 'string') return arg;
+      if (arg instanceof Error) return `${arg.name}: ${arg.message}`;
+      if (arg && typeof arg === 'object') {
+        return [arg.msg, arg.message, arg.err?.message, arg.error?.message]
+          .filter(Boolean)
+          .join(' ');
+      }
+      return String(arg ?? '');
+    })
+    .filter(Boolean)
+    .join(' ');
+
+  if (!text) return null;
+  const match = SIGNAL_ERROR_PATTERNS.find(({ pattern }) => pattern.test(text));
+  if (!match) return null;
+  return {
+    code: match.code,
+    message: redactSignalErrorMessage(text),
+  };
+}
+
+function pruneSignalErrorMetrics(metrics, now = Date.now()) {
+  const cutoff = now - SIGNAL_ERROR_WINDOW_MS;
+  metrics.recent = metrics.recent
+    .filter((entry) => entry.at >= cutoff)
+    .slice(-SIGNAL_ERROR_MAX_EVENTS);
+}
+
+function recordSignalError(metrics, event) {
+  const now = Date.now();
+  pruneSignalErrorMetrics(metrics, now);
+  metrics.total += 1;
+  metrics.byCode[event.code] = (metrics.byCode[event.code] || 0) + 1;
+  metrics.lastEventAt = new Date(now).toISOString();
+  metrics.lastCode = event.code;
+  metrics.lastMessage = event.message;
+  metrics.recent.push({
+    at: now,
+    atIso: metrics.lastEventAt,
+    code: event.code,
+    message: event.message,
+  });
+  if (metrics.recent.length > SIGNAL_ERROR_MAX_EVENTS) {
+    metrics.recent = metrics.recent.slice(-SIGNAL_ERROR_MAX_EVENTS);
+  }
+}
+
+function snapshotSignalErrorMetrics(metrics) {
+  pruneSignalErrorMetrics(metrics);
+  return {
+    total: metrics.total,
+    byCode: { ...metrics.byCode },
+    recentWindowMs: SIGNAL_ERROR_WINDOW_MS,
+    recentCount: metrics.recent.length,
+    lastEventAt: metrics.lastEventAt,
+    lastCode: metrics.lastCode,
+    lastMessage: metrics.lastMessage,
+  };
+}
+
 /**
  * Create a Baileys client that matches the WAAdapter contract.
  * @param {string} clientId - Unique identifier for this client (e.g., 'wa-admin', 'wa-gateway-123')
@@ -147,9 +236,28 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   // Create event emitter for external listeners
   const emitter = new EventEmitter();
   
+  const signalErrorMetrics = createSignalErrorMetrics();
+
   // Logger configuration
   const logger = pino({ 
     level: debugLoggingEnabled ? 'debug' : 'warn',
+    hooks: {
+      logMethod(args, method) {
+        const signalError = classifySignalErrorFromArgs(args);
+        if (signalError) {
+          recordSignalError(signalErrorMetrics, signalError);
+          writeStructuredLog('warn', buildStructuredLog({
+            clientId,
+            event: 'signal_decrypt_error',
+            errorCode: signalError.code,
+            error: signalError.message,
+            recentCount: signalErrorMetrics.recent.length,
+            total: signalErrorMetrics.total,
+          }));
+        }
+        return method.apply(this, args);
+      },
+    },
     transport: {
       target: 'pino-pretty',
       options: {
@@ -557,6 +665,18 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     // Expose clientId for debugging
     get clientId() {
       return clientId;
+    },
+
+    get sessionPath() {
+      return authDir;
+    },
+
+    get authDataPath() {
+      return resolveAuthDataPath();
+    },
+
+    getSignalErrorMetrics() {
+      return snapshotSignalErrorMetrics(signalErrorMetrics);
     },
   };
 
