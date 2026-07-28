@@ -348,3 +348,54 @@ test('baileys adapter supports listenerCount method', async () => {
   const finalCount = client.listenerCount('message');
   expect(finalCount).toBe(initialCount);
 });
+
+test('baileys adapter exposes default signal error recovery config', async () => {
+  const client = await createBaileysClient();
+
+  expect(client.getSignalErrorRecoveryConfig()).toEqual({
+    threshold: 5,
+    windowMs: 60000,
+    resetAuthSession: false,
+  });
+});
+
+test('baileys adapter records Bad MAC metrics and schedules recovery at threshold', async () => {
+  jest.useFakeTimers();
+  process.env.WA_SIGNAL_ERROR_REINIT_THRESHOLD = '2';
+
+  const client = await createBaileysClient('signal-client');
+  const loggerOptions = pinoMock.mock.calls[0][0];
+  const pinoMethod = jest.fn();
+
+  loggerOptions.hooks.logMethod(['Session error:Error: Bad MAC Error: Bad MAC'], pinoMethod);
+  loggerOptions.hooks.logMethod(['Failed to decrypt message with any known session... Bad MAC'], pinoMethod);
+
+  expect(pinoMethod).toHaveBeenCalledTimes(2);
+  expect(client.getSignalErrorMetrics()).toEqual(expect.objectContaining({
+    total: 2,
+    byCode: { BAD_MAC: 2 },
+    recentCount: 2,
+    lastCode: 'BAD_MAC',
+  }));
+
+  await jest.advanceTimersByTimeAsync(1000);
+
+  expect(mockSock.end).toHaveBeenCalled();
+  jest.useRealTimers();
+});
+
+test('baileys adapter can disable automatic signal error recovery', async () => {
+  jest.useFakeTimers();
+  process.env.WA_SIGNAL_ERROR_REINIT_THRESHOLD = '0';
+
+  await createBaileysClient('signal-disabled-client');
+  const loggerOptions = pinoMock.mock.calls[0][0];
+  const pinoMethod = jest.fn();
+
+  loggerOptions.hooks.logMethod(['Bad MAC'], pinoMethod);
+
+  await jest.advanceTimersByTimeAsync(1000);
+
+  expect(mockSock.end).not.toHaveBeenCalled();
+  jest.useRealTimers();
+});

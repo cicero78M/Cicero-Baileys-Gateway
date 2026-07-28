@@ -95,6 +95,25 @@ const SIGNAL_ERROR_PATTERNS = [
 ];
 const SIGNAL_ERROR_WINDOW_MS = 5 * 60 * 1000;
 const SIGNAL_ERROR_MAX_EVENTS = 100;
+const DEFAULT_SIGNAL_ERROR_REINIT_THRESHOLD = 5;
+const DEFAULT_SIGNAL_ERROR_REINIT_WINDOW_MS = 60 * 1000;
+
+function parsePositiveIntegerEnv(name, defaultValue) {
+  const rawValue = (process.env[name] || '').trim();
+  if (!rawValue) return defaultValue;
+  const parsedValue = Number.parseInt(rawValue, 10);
+  return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : defaultValue;
+}
+
+function shouldResetAuthSessionOnSignalError() {
+  return process.env.WA_SIGNAL_ERROR_RESET_AUTH_SESSION === 'true';
+}
+
+function scheduleTimeout(callback, ms) {
+  const timeout = setTimeout(callback, ms);
+  timeout.unref?.();
+  return timeout;
+}
 
 function createSignalErrorMetrics() {
   return {
@@ -237,6 +256,58 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   const emitter = new EventEmitter();
   
   const signalErrorMetrics = createSignalErrorMetrics();
+  const signalErrorReinitThreshold = parsePositiveIntegerEnv(
+    'WA_SIGNAL_ERROR_REINIT_THRESHOLD',
+    DEFAULT_SIGNAL_ERROR_REINIT_THRESHOLD
+  );
+  const signalErrorReinitWindowMs = parsePositiveIntegerEnv(
+    'WA_SIGNAL_ERROR_REINIT_WINDOW_MS',
+    DEFAULT_SIGNAL_ERROR_REINIT_WINDOW_MS
+  );
+  let signalRecoveryInProgress = false;
+
+  function countRecentSignalErrors(code, now = Date.now()) {
+    const cutoff = now - signalErrorReinitWindowMs;
+    return signalErrorMetrics.recent.filter((entry) => entry.code === code && entry.at >= cutoff).length;
+  }
+
+  function scheduleSignalErrorRecovery(signalError) {
+    if (!signalErrorReinitThreshold || signalRecoveryInProgress) {
+      return;
+    }
+
+    const recentCount = countRecentSignalErrors(signalError.code);
+    if (recentCount < signalErrorReinitThreshold) {
+      return;
+    }
+
+    const resetAuthSession = shouldResetAuthSessionOnSignalError();
+    signalRecoveryInProgress = true;
+    writeStructuredLog('warn', buildStructuredLog({
+      clientId,
+      event: 'signal_error_recovery_scheduled',
+      errorCode: signalError.code,
+      recentCount,
+      threshold: signalErrorReinitThreshold,
+      windowMs: signalErrorReinitWindowMs,
+      resetAuthSession,
+    }));
+
+    scheduleTimeout(async () => {
+      try {
+        await reinitializeClient('signal_decrypt_error', { resetAuthSession });
+      } catch (err) {
+        writeStructuredLog('error', buildStructuredLog({
+          clientId,
+          event: 'signal_error_recovery_failed',
+          errorCode: signalError.code,
+          error: err.message,
+        }));
+      } finally {
+        signalRecoveryInProgress = false;
+      }
+    }, 1000);
+  }
 
   // Logger configuration
   const logger = pino({ 
@@ -254,6 +325,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             recentCount: signalErrorMetrics.recent.length,
             total: signalErrorMetrics.total,
           }));
+          scheduleSignalErrorRecovery(signalError);
         }
         return method.apply(this, args);
       },
@@ -363,7 +435,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             reason,
           }));
           emitter.emit('auth_failure', `Logged out: ${reason}`);
-          setTimeout(() => reinitializeClient('logged_out', { resetAuthSession: true }), 1000);
+          scheduleTimeout(() => reinitializeClient('logged_out', { resetAuthSession: true }), 1000);
         } else if (shouldReconnect && connectionRetries < maxConnectionRetries) {
           connectionRetries++;
           writeStructuredLog('info', buildStructuredLog({
@@ -371,7 +443,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             event: 'attempting_reconnect',
             attempt: connectionRetries,
           }));
-          setTimeout(() => reinitializeClient('connection_lost'), 5000);
+          scheduleTimeout(() => reinitializeClient('connection_lost'), 5000);
         }
       } else if (connection === 'open') {
         connectState = 'connected';
@@ -677,6 +749,14 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
     getSignalErrorMetrics() {
       return snapshotSignalErrorMetrics(signalErrorMetrics);
+    },
+
+    getSignalErrorRecoveryConfig() {
+      return {
+        threshold: signalErrorReinitThreshold,
+        windowMs: signalErrorReinitWindowMs,
+        resetAuthSession: shouldResetAuthSessionOnSignalError(),
+      };
     },
   };
 
