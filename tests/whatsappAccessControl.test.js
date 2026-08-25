@@ -3,7 +3,9 @@ import { jest } from '@jest/globals';
 
 const mockQuery = jest.fn();
 
-jest.unstable_mockModule('../src/repository/db.js', () => ({
+// userModel imports this adapter directly. Keep it mocked so this unit test can
+// never reach PostgreSQL or mutate a real user record.
+jest.unstable_mockModule('../src/db/index.js', () => ({
   query: mockQuery
 }));
 

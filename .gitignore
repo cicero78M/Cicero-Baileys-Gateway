@@ -141,3 +141,7 @@ node_modules/
 .env.example
 .wwebjs_auth/
 .env.test
+
+# Local SSH credentials must never be committed.
+/ssh-key
+/ssh-key.pub
