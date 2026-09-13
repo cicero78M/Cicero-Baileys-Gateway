@@ -20,6 +20,11 @@ const pool = new Pool({
   database: env.DB_NAME,
   password: env.DB_PASS,
   port: env.DB_PORT,
+  max: env.DB_POOL_MAX,
+  connectionTimeoutMillis: env.DB_CONNECT_TIMEOUT_MS,
+  query_timeout: env.DB_QUERY_TIMEOUT_MS,
+  statement_timeout: env.DB_QUERY_TIMEOUT_MS,
+  idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS,
   options: '-c timezone=Asia/Jakarta',
 });
 
