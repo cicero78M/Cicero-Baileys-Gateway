@@ -28,6 +28,7 @@ import {
   handleConfirmationDM,
 } from "./waAutoComplaintService.js";
 import { handleAutoSosmedTaskMessageIfApplicable } from "./waAutoSosmedTaskService.js";
+import { handleCustomerServiceMessage } from './customerService.js';
 import { waClientConfigHandler } from "../handler/waClientConfigHandler.js";
 import {
   isAdminWhatsApp,
@@ -1103,6 +1104,15 @@ export async function handleGatewayMessage(msg) {
     quotedInfo: null
   });
   if (handledClientConfig) return;
+
+  const customerService = await handleCustomerServiceMessage({
+    text,
+    senderId,
+    chatId,
+    pool,
+    send: (response) => waClient.sendMessage(chatId, response),
+  });
+  if (customerService.handled) return;
 
   const handledComplaint = await handleComplaintMessageIfApplicable({
     text,

@@ -438,14 +438,15 @@ export async function getRekapLikesByClient(
     GROUP BY username, client_id
   `;
   let likeJoin = `
-    lower(replace(trim(u.insta), '@', '')) = lc.username
+    (EXISTS (SELECT 1 FROM user_social_accounts usa WHERE usa.user_id = u.user_id AND LOWER(usa.platform) = 'instagram' AND usa.is_active = TRUE AND lower(replace(trim(coalesce(usa.username, '')), '@', '')) = lc.username)
+    OR lower(replace(trim(coalesce(u.insta, '')), '@', '')) = lc.username)
     AND LOWER(u.client_id) = LOWER(lc.client_id)
   `;
   if (userClientParamIdx !== null) {
     userWhere = `LOWER(u.client_id) = LOWER($${userClientParamIdx})`;
   }
   if (userClientParamIdx === null || !matchLikeClientId) {
-    likeJoin = "lower(replace(trim(u.insta), '@', '')) = lc.username";
+    likeJoin = "(EXISTS (SELECT 1 FROM user_social_accounts usa WHERE usa.user_id = u.user_id AND LOWER(usa.platform) = 'instagram' AND usa.is_active = TRUE AND lower(replace(trim(coalesce(usa.username, '')), '@', '')) = lc.username) OR lower(replace(trim(coalesce(u.insta, '')), '@', '')) = lc.username)";
     likeCountsSelect = `
       SELECT username, COUNT(DISTINCT shortcode) AS jumlah_like
       FROM valid_likes

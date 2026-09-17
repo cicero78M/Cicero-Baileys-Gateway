@@ -8,6 +8,7 @@
  */
 
 import { query as globalQuery } from '../db/index.js';
+import crypto from 'node:crypto';
 
 function normalizeHandle(value) {
   return String(value || '').trim().replace(/^@/, '').toLowerCase();
@@ -18,6 +19,41 @@ function q(db) {
   return db && typeof db.query === 'function'
     ? (sql, params) => db.query(sql, params)
     : globalQuery;
+}
+
+export async function recordCustomerServiceAudit(event, db) {
+  const dbFn = q(db);
+  const senderHash = event.senderJid
+    ? crypto.createHash('sha256').update(String(event.senderJid)).digest('hex')
+    : null;
+  const messageHash = event.messageText
+    ? crypto.createHash('sha256').update(String(event.messageText)).digest('hex')
+    : null;
+  try {
+    await dbFn(
+      `INSERT INTO customer_service_audit
+        (sender_hash, message_hash, user_id, intent, "authorization", model,
+         prompt_version, knowledge_source, response_status, latency_ms, estimated_cost_usd)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        senderHash,
+        messageHash,
+        event.userId || null,
+        event.intent || null,
+        event.authorization || null,
+        event.model || null,
+        event.promptVersion || null,
+        event.knowledgeSource || null,
+        event.responseStatus || null,
+        Number.isFinite(event.latencyMs) ? event.latencyMs : null,
+        Number.isFinite(event.estimatedCostUsd) ? event.estimatedCostUsd : null,
+      ],
+    );
+  } catch (err) {
+    // Audit persistence must never turn a valid customer response into a
+    // retry storm. The migration is applied separately during deployment.
+    console.warn('[customer-service] audit persistence unavailable:', err?.message || err);
+  }
 }
 
 // ─── SQL Templates ──────────────────────────────────────────────────────────

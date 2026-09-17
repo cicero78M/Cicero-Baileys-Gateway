@@ -10,7 +10,8 @@ export const env = cleanEnv(process.env, {
   DB_NAME: str({ default: '' }),
   DB_PASS: str({ default: '' }),
   DB_PORT: port({ default: 5432 }),
-  DB_POOL_MAX: num({ default: 5 }),
+  // This service shares PostgreSQL with the API and background workers.
+  DB_POOL_MAX: num({ default: 2 }),
   DB_CONNECT_TIMEOUT_MS: num({ default: 5000 }),
   DB_QUERY_TIMEOUT_MS: num({ default: 12000 }),
   DB_IDLE_TIMEOUT_MS: num({ default: 30000 }),

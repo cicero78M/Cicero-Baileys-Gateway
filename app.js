@@ -9,7 +9,7 @@ import { notFound, errorHandler } from './src/middleware/errorHandler.js';
 import { dedupRequest } from './src/middleware/dedupRequestMiddleware.js';
 import { sensitivePathGuard } from './src/middleware/sensitivePathGuard.js';
 import { logger } from './src/utils/logger.js';
-import { query } from './src/db/postgres.js';
+import { query, close as closeDatabase } from './src/db/postgres.js';
 import { purgeExpiredSessions } from './src/repository/operatorRegistrationSessionRepository.js';
 
 // Bootstrap WA service (registers Baileys client and message handlers)
@@ -47,6 +47,25 @@ app.use(notFound);
 app.use(errorHandler);
 
 const PORT = env.PORT;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   logger.info({ port: PORT }, 'Backend server running');
 });
+
+let shuttingDown = false;
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.once(signal, async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info({ signal }, 'Shutdown requested; draining HTTP server and database pool');
+    const forceExit = setTimeout(() => process.exit(1), 10_000);
+    forceExit.unref();
+    try {
+      await new Promise((resolve) => server.close(resolve));
+      await closeDatabase();
+      process.exit(0);
+    } catch (error) {
+      logger.error({ err: error }, 'Graceful shutdown failed');
+      process.exit(1);
+    }
+  });
+}

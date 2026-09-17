@@ -127,6 +127,31 @@ function normalizeWhatsappField(value) {
   return normalized;
 }
 
+/**
+ * Resolve a customer-service sender without exposing whether an unknown
+ * number exists in the database.  The caller must use the returned user only
+ * after all three customer-consent gates pass.
+ */
+export async function findEligibleCustomerByWhatsapp(whatsapp, db = null) {
+  const normalized = normalizeWhatsappNumber(whatsapp);
+  if (!normalized) return null;
+
+  const queryFn = db && typeof db.query === 'function' ? db.query.bind(db) : query;
+  const { rows } = await queryFn(
+    `SELECT user_id, nama, client_id, whatsapp
+     FROM "user"
+     WHERE regexp_replace(COALESCE(whatsapp, ''), '[^0-9]', '', 'g') = $1
+       AND status IS TRUE
+       AND whatsapp_verified IS TRUE
+       AND wa_notification_opt_in IS TRUE
+     LIMIT 2`,
+    [normalized],
+  );
+
+  // Ambiguous phone ownership is denied rather than selecting arbitrarily.
+  return rows.length === 1 ? rows[0] : null;
+}
+
 // Bangun klausa filter client dengan mempertimbangkan tipe client
 async function buildClientFilter(
   clientId,

@@ -19,7 +19,10 @@ export async function upsertInstaPost(data) {
 
   await query(
     `INSERT INTO insta_post (client_id, shortcode, caption, comment_count, like_count, thumbnail_url, is_video, video_url, image_url, images_url, is_carousel, source_type, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,COALESCE($13, NOW()))
+     -- insta_post stores timestamp without time zone as UTC wall-clock.
+     -- Normalize ISO timestamps before insertion so uploads near midnight WIB
+     -- cannot be stored under the previous calendar date.
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,COALESCE(($13::timestamptz AT TIME ZONE 'UTC'), (NOW() AT TIME ZONE 'UTC')))
      ON CONFLICT (shortcode) DO UPDATE
       SET client_id = EXCLUDED.client_id,
           caption = EXCLUDED.caption,

@@ -19,7 +19,7 @@ export async function upsertInstaPost(data) {
 
   await query(
     `INSERT INTO insta_post_khusus (client_id, shortcode, caption, comment_count, like_count, thumbnail_url, is_video, video_url, image_url, images_url, is_carousel, source_type, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,COALESCE($13, NOW()))
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,COALESCE(($13::timestamptz AT TIME ZONE 'Asia/Jakarta'), (NOW() AT TIME ZONE 'Asia/Jakarta')))
      ON CONFLICT (shortcode) DO UPDATE
       SET client_id = EXCLUDED.client_id,
           caption = EXCLUDED.caption,
@@ -46,28 +46,22 @@ export async function findPostByShortcode(shortcode) {
 }
 
 export async function getShortcodesTodayByClient(client_id) {
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, '0');
-  const dd = String(today.getDate()).padStart(2, '0');
   const res = await query(
     `SELECT shortcode FROM insta_post_khusus
-     WHERE client_id = $1 AND DATE(created_at) = $2`,
-    [client_id, `${yyyy}-${mm}-${dd}`]
+     WHERE client_id = $1
+       AND created_at::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date`,
+    [client_id]
   );
   return res.rows.map(r => r.shortcode);
 }
 
 export async function getShortcodesTodayByUsername(username) {
   if (!username) return [];
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, '0');
-  const dd = String(today.getDate()).padStart(2, '0');
   const res = await query(
     `SELECT p.shortcode FROM insta_post_khusus p JOIN clients c ON c.client_id = p.client_id
-     WHERE c.client_insta = $1 AND DATE(p.created_at) = $2`,
-    [username, `${yyyy}-${mm}-${dd}`]
+     WHERE c.client_insta = $1
+       AND p.created_at::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date`,
+    [username]
   );
   return res.rows.map(r => r.shortcode);
 }
@@ -75,7 +69,9 @@ export async function getShortcodesTodayByUsername(username) {
 
 export async function getPostsTodayByClient(client_id) {
   const res = await query(
-    `SELECT * FROM insta_post_khusus WHERE client_id = $1 AND created_at::date = NOW()::date`,
+    `SELECT * FROM insta_post_khusus
+     WHERE client_id = $1
+       AND created_at::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date`,
     [client_id]
   );
   return res.rows;
@@ -106,7 +102,7 @@ export async function getPostsByClientAndDateRange(
 
   if (days) {
     const safeDays = parseInt(days);
-    text += ` AND created_at >= NOW() - INTERVAL '${safeDays} days'`;
+    text += ` AND created_at >= (NOW() AT TIME ZONE 'Asia/Jakarta') - INTERVAL '${safeDays} days'`;
   } else {
     if (startDate) {
       values.push(startDate);
